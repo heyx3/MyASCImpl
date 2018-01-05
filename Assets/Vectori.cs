@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 
 
+[Serializable]
 public struct Vector2i : System.IEquatable<Vector2i>
 {
 	public static Vector2i Zero { get { return new Vector2i(0, 0); } }
@@ -28,6 +29,28 @@ public struct Vector2i : System.IEquatable<Vector2i>
 	public static Vector2i operator *(Vector2i a, int b) { return new Vector2i(a.x * b, a.y * b); }
 	public static Vector2i operator /(Vector2i a, int b) { return new Vector2i(a.x / b, a.y / b); }
 	public static Vector2i operator -(Vector2i a) { return new Vector2i(-a.x, -a.y); }
+
+	public int this[int i]
+	{
+		get
+		{
+			switch (i)
+			{
+				case 0: return x;
+				case 1: return y;
+				default: throw new IndexOutOfRangeException(i.ToString());
+			}
+		}
+		set
+		{
+			switch (i)
+			{
+				case 0: x = value; break;
+				case 1: y = value; break;
+				default: throw new IndexOutOfRangeException(i.ToString());
+			}
+		}
+	}
 
 	public static bool operator ==(Vector2i a, Vector2i b) { return a.x == b.x && a.y == b.y; }
 	public static bool operator !=(Vector2i a, Vector2i b) { return !(a == b); }
@@ -83,6 +106,7 @@ public struct Vector2i : System.IEquatable<Vector2i>
 }
 
 
+[Serializable]
 public struct Vector3i : System.IEquatable<Vector3i>
 {
 	public static Vector3i Zero { get { return new Vector3i(0, 0, 0); } }
@@ -109,6 +133,30 @@ public struct Vector3i : System.IEquatable<Vector3i>
 	public static Vector3i operator *(Vector3i a, int b) { return new Vector3i(a.x * b, a.y * b, a.z * b); }
 	public static Vector3i operator /(Vector3i a, int b) { return new Vector3i(a.x / b, a.y / b, a.z / b); }
 	public static Vector3i operator -(Vector3i a) { return new Vector3i(-a.x, -a.y, -a.z); }
+
+	public int this[int i]
+	{
+		get
+		{
+			switch (i)
+			{
+				case 0: return x;
+				case 1: return y;
+				case 2: return z;
+				default: throw new IndexOutOfRangeException(i.ToString());
+			}
+		}
+		set
+		{
+			switch (i)
+			{
+				case 0: x = value; break;
+				case 1: y = value; break;
+				case 2: z = value; break;
+				default: throw new IndexOutOfRangeException(i.ToString());
+			}
+		}
+	}
 
 	public static bool operator ==(Vector3i a, Vector3i b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 	public static bool operator !=(Vector3i a, Vector3i b) { return !(a == b); }

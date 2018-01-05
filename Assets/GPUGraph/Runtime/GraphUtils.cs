@@ -157,7 +157,7 @@ namespace GPUGraph
             GenerateToTexture(noiseMat, colorTex3, true);
 
             //Read the noise into the array.
-            Color[] cols = colorTex.GetPixels();
+            Color[] cols = colorTex3.GetPixels();
             int i = 0;
             for (int z = 0; z < outData.GetLength(2); ++z)
                 for (int y = 0; y < outData.GetLength(1); ++y)
@@ -173,9 +173,8 @@ namespace GPUGraph
 			{
 				//Find the best-possible supported format for this.
 				TextureFormat[] fmts = new TextureFormat[]
-					{ TextureFormat.RFloat, TextureFormat.RGBAFloat,
-					  TextureFormat.RHalf, TextureFormat.RGBAHalf,
-					  TextureFormat.BGRA32, TextureFormat.RGBA32, TextureFormat.ARGB32 };
+					{ TextureFormat.RGBAFloat, TextureFormat.RGBAHalf,
+					  TextureFormat.RGB24, TextureFormat.RGBA32, TextureFormat.ARGB32 };
 				TextureFormat? fmt = null;
 				for (int i = 0; i < fmts.Length; ++i)
 				{
@@ -206,9 +205,8 @@ namespace GPUGraph
             {
                 //Find the best-possible supported format for this.
                 TextureFormat[] fmts = new TextureFormat[]
-                    { TextureFormat.RFloat, TextureFormat.RGBAFloat,
-                      TextureFormat.RHalf, TextureFormat.RGBAHalf,
-                      TextureFormat.BGRA32, TextureFormat.RGBA32, TextureFormat.ARGB32 };
+                    { TextureFormat.RGBAFloat, TextureFormat.RGBAHalf,
+                      TextureFormat.RGB24, TextureFormat.RGBA32, TextureFormat.ARGB32 };
                 TextureFormat? fmt = null;
                 for (int i = 0; i < fmts.Length; ++i)
                 {
