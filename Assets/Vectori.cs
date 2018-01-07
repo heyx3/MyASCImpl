@@ -105,6 +105,69 @@ public struct Vector2i : System.IEquatable<Vector2i>
 	#endregion
 }
 
+/// <summary>
+/// A region of 2d integer coordinates.
+/// You can "foreach" over an instance of this class, for every coordinate inside it.
+/// </summary>
+[Serializable]
+public struct Rect2i : System.IEquatable<Rect2i>
+{
+	/// <summary>
+	/// Min is inclusive, Max is exclusive.
+	/// </summary>
+	public Vector2i Min, Max;
+
+	public Vector2i Size { get { return Max - Min; } }
+
+	public Vector2i MinMaxCorner { get { return new Vector2i(Min.x, Max.y); } }
+	public Vector2i MaxMinCorner { get { return new Vector2i(Max.x, Min.y); } }
+
+
+	public Rect2i(Vector2i min, Vector2i maxExclusive)
+	{
+		Min = min;
+		Max = maxExclusive;
+	}
+
+
+	public bool Contains(Vector2i v) { return v.x >= Min.x & v.y >= Min.y & v.x < Max.x & v.y < Max.y; }
+	public bool Contains(Rect2i r)
+	{
+		//If this instance contains r's min and max, it must contain all of r.
+		return Contains(r.Min) & Contains(r.Max);
+	}
+	public bool Touches(Rect2i r)
+	{
+		//If one rectangle is on the left or above the other, they do not touch.
+		//Otherwise, they must be touching.
+		return !(Min.x > r.Max.x | Max.x < r.Min.x |
+				 Min.y > r.Max.y | Max.y < r.Min.y);
+	}
+
+	public override string ToString()
+	{
+		return "[" + Min + " - " + Max + ")";
+	}
+	public override int GetHashCode()
+	{
+		return unchecked((Min.x * 73856093) ^ (Min.y * 19349663) ^
+						 (Max.x * 83492791) ^ (Max.y * 4256233));
+	}
+	public override bool Equals(object obj)
+	{
+		return (obj is Rect2i) && Equals((Rect2i)obj);
+	}
+	public bool Equals(Rect2i obj)
+	{
+		return Min == obj.Min & Max == obj.Max;
+	}
+
+	public static bool operator ==(Rect2i a, Rect2i b) { return a.Equals(b); }
+	public static bool operator !=(Rect2i a, Rect2i b) { return !a.Equals(b); }
+
+	public Vector2i.Iterator GetEnumerator() { return new Vector2i.Iterator(Min, Max); }
+}
+
 
 [Serializable]
 public struct Vector3i : System.IEquatable<Vector3i>
@@ -215,4 +278,70 @@ public struct Vector3i : System.IEquatable<Vector3i>
 		public Iterator GetEnumerator() { return this; }
 	}
 	#endregion
+}
+
+/// <summary>
+/// A region of 2d integer coordinates.
+/// You can "foreach" over an instance of this class, for every coordinate inside it.
+/// </summary>
+[Serializable]
+public struct Rect3i : System.IEquatable<Rect3i>
+{
+	/// <summary>
+	/// Min is inclusive, Max is exclusive.
+	/// </summary>
+	public Vector3i Min, Max;
+
+	public Vector3i Size { get { return Max - Min; } }
+
+
+	public Rect3i(Vector3i min, Vector3i maxExclusive)
+	{
+		Min = min;
+		Max = maxExclusive;
+	}
+
+
+	public bool Contains(Vector3i v)
+	{
+		return v.x >= Min.x & v.y >= Min.y & v.z >= Min.z &
+		  	   v.x < Max.x & v.y < Max.y & v.z < Max.z;
+	}
+	public bool Contains(Rect3i r)
+	{
+		//If this instance contains r's min and max, it must contain all of r.
+		return Contains(r.Min) & Contains(r.Max);
+	}
+	public bool Touches(Rect3i r)
+	{
+		//If one rectangle is on the left or above or behind the other, they do not touch.
+		//Otherwise, they must be touching.
+		return !(Min.x > r.Max.x | Max.x < r.Min.x |
+				 Min.y > r.Max.y | Max.y < r.Min.y |
+				 Min.z > r.Max.z | Max.z < r.Min.z);
+	}
+
+	public override string ToString()
+	{
+		return "[" + Min + " - " + Max + ")";
+	}
+	public override int GetHashCode()
+	{
+		return unchecked((Min.x * 73856093) ^ (Max.x * 19349663) ^
+						 (Min.y * 83492791) ^ (Max.y * 4256233) ^
+						 (Min.z * 15485867) ^ (Max.z * 32451169));
+	}
+	public override bool Equals(object obj)
+	{
+		return (obj is Rect3i) && Equals((Rect3i)obj);
+	}
+	public bool Equals(Rect3i obj)
+	{
+		return Min == obj.Min & Max == obj.Max;
+	}
+
+	public static bool operator ==(Rect3i a, Rect3i b) { return a.Equals(b); }
+	public static bool operator !=(Rect3i a, Rect3i b) { return !a.Equals(b); }
+
+	public Vector3i.Iterator GetEnumerator() { return new Vector3i.Iterator(Min, Max); }
 }

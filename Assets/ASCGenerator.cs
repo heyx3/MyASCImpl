@@ -352,6 +352,12 @@ public class ASCGenerator : MonoBehaviour
 
 	#endregion
 
+	#region Padis
+
+	List<Rect2i>[] gen_padiRectsPerXYFarm;
+
+	#endregion
+
 	#endregion
 
 	//Runs the generation algorithm, spread across multiple frames.
@@ -384,6 +390,98 @@ public class ASCGenerator : MonoBehaviour
 
 		//Create strips.
 		Algo_CalcStrips(out gen_stripsAlongXY, gen_lignsAlongX);
+
+		yield return null;
+
+		//Create padis.
+		gen_padiRectsPerXYFarm = new List<Rect2i>[gen_samples.SizeZ()];
+		List<Rect2i> newPadis = new List<Rect2i>(gen_samples.SizeX());
+		for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
+		{
+			//Allocate the list with a good first estimate of how many elements it will have.
+			var padis = new List<Rect2i>(gen_samples.SizeX() * gen_samples.SizeY() / 2);
+			gen_padiRectsPerXYFarm[z] = padis;
+
+			//For every strip in the farm...
+			for (int stripI = 0; stripI < gen_stripsAlongXY.SizeX(); ++stripI)
+			{
+				var strip = gen_stripsAlongXY[stripI, z];
+
+				//For every length-maximal simple plot in the strip...
+				ushort plotI = 0;
+				while (true)
+				{
+					plotI = strip.Values[plotI];
+
+					//Start with the plot's rectangle.
+					int minX, maxX;
+					strip.GetEdges(plotI, out minX, out maxX);
+					Rect2i padi = new Rect2i(new Vector2i(minX, stripI),
+											 new Vector2i(maxX, stripI + 1));
+
+					//Move downward through neighbor strips of the same size and add them to the padi.
+					for (int neighborStripI = stripI + 1;
+						 neighborStripI < gen_stripsAlongXY.SizeX();
+						 ++neighborStripI)
+					{
+						var neighborStrip = gen_stripsAlongXY[neighborStripI, z];
+						//If this plot on the neighbor strip is the length-maximal simple plot,
+						//    add it to the padi.
+						if (neighborStrip.Values[plotI] == plotI)
+							padi = new Rect2i(padi.Min, new Vector2i(maxX, neighborStripI + 1));
+					}
+
+					//Split up the padi so it conforms to the binary tree structure.
+					newPadis.Clear();
+					newPadis.Add(padi);
+					for (int newPadiI = 0; newPadiI < newPadis.Count; ++newPadiI)
+					{
+						var newPadi = newPadis[newPadiI];
+						TODO: Implement.
+					}
+
+					//For each padi, try to add it to the list.
+					foreach (var newPadi in newPadis)
+					{
+						bool shouldDrop = false;
+
+						//See if it interacts with other padis.
+						for (int oldPadiI = 0; oldPadiI < padis.Count; ++oldPadiI)
+						{
+							var oldPadi = padis[oldPadiI];
+							//If a current padi totally contains this one,
+							//    then this one isn't necessary.
+							if (oldPadi.Contains(newPadi))
+							{
+								shouldDrop = true;
+								break;
+							}
+							//If this padi totally contains a current one,
+							//    then the current one isn't necessary.
+							else if (newPadi.Contains(oldPadi))
+							{
+								padis.RemoveAt(oldPadiI);
+								oldPadiI -= 1;
+								continue;
+							}
+							//If the two padis just touch a bit, they need to be clipped.
+							else if (newPadi.Touches(oldPadi))
+							{
+								TODO: Implement.
+							}
+						}
+
+						if (!shouldDrop)
+							padis.Add(newPadi);
+					}
+
+
+					//Exit the loop if we've reached the end of the strip.
+					if (strip.IsLastInLayer(plotI))
+						break;
+				}
+			}
+		}
 	}
 
 
@@ -393,25 +491,43 @@ public class ASCGenerator : MonoBehaviour
 	public bool rend_DoArea = true,
 				rend_DoSamples = false,
 				rend_DoLigns = false,
-				rend_DoStrips = false;
+				rend_DoStrips = false,
+				rend_DoPadis = false;
 
-	public float rend_Area_Alpha = 0.2f;
+	public float rend_Area_Alpha = 0.2f,
+				 rend_Sample_Alpha = 0.05f,
+				 rend_Lign_Alpha = 0.5f;
+	public Color rend_Strip_Color = Color.white,
+				 rend_Padi_Color = Color.white;
 
-	public float rend_Sample_Alpha = 0.05f;
 	public Vector3i rend_Sample_MinI = Vector3i.Zero,
 					rend_Sample_MaxI = new Vector3i(2, 2, 2);
 	public bool rend_Sample_IgnoreBelowThreshold = false;
 
-	public float rend_Lign_Alpha = 0.5f;
-
-	public float rend_Strip_Alpha = 0.5f;
 
 	private Vector3i.Iterator rend_SampleIterator
 		{ get { return new Vector3i.Iterator(rend_Sample_MinI, rend_Sample_MaxI + 1); } }
+	private float rend_SampleSpaceIncrement { get { return AreaSize / (float)(NSamples - 1); } }
 
+	private float rend_SampleToWorldSpace(float sampleI)
+	{
+		return -(AreaSize * 0.5f) + (sampleI * rend_SampleSpaceIncrement);
+	}
+	private Vector3 rend_SampleToWorldSpace(Vector3i sample)
+	{
+		return rend_SampleToWorldSpace(sample.x, sample.y, sample.z);
+	}
+	private Vector3 rend_SampleToWorldSpace(float sampleX, float sampleY, float sampleZ)
+	{
+		float halfAreaSize = AreaSize * 0.5f;
+		float sampleIncrement = rend_SampleSpaceIncrement;
+
+		return new Vector3(-halfAreaSize + (sampleX * sampleIncrement),
+						   -halfAreaSize + (sampleY * sampleIncrement),
+						   -halfAreaSize + (sampleZ * sampleIncrement));
+	}
 	private void rend_DrawSpans<T>(SpanTree<T> spanTree,
 								   int axis, int axis2, int axis3, Vector2i pos23,
-								   float halfAreaSize, float sampleIncrement,
 								   Func<T, ushort> getSimplestIndex,
 								   Action<Vector3, Vector3> spanDrawer)
 	{
@@ -425,12 +541,12 @@ public class ASCGenerator : MonoBehaviour
 			spanI = getSimplestIndex(spanTree.Values[spanI]);
 			spanTree.GetEdges(spanI, out sampleMin, out sampleMax);
 
-			//Calculate the world-space position of the dike.
+			//Calculate the positions to draw the gizmos at.
 			const float border = 0.1f;
-			float sampleMinPos1 = -halfAreaSize + ((sampleMin + border) * sampleIncrement),
-				  sampleMaxPos1 = -halfAreaSize + ((sampleMax - border) * sampleIncrement);
-			Vector2 samplePos23 = new Vector2(-halfAreaSize + (pos23.x * sampleIncrement),
-											  -halfAreaSize + (pos23.y * sampleIncrement));
+			float sampleMinPos1 = rend_SampleToWorldSpace(sampleMin + border),
+				  sampleMaxPos1 = rend_SampleToWorldSpace(sampleMax - border);
+			Vector2 samplePos23 = new Vector2(rend_SampleToWorldSpace(pos23.x),
+											  rend_SampleToWorldSpace(pos23.y));
 
 			//Draw the dike.
 			Vector3 lineStart = new Vector3(),
@@ -457,30 +573,20 @@ public class ASCGenerator : MonoBehaviour
 			Gizmos.DrawCube(Vector3.zero, new Vector3(AreaSize, AreaSize, AreaSize));
 		}
 
-		//If samples haven't even been created yet, there's nothing else to render.
-		if (!Application.isPlaying || gen_samples == null)
-			return;
 
-		//Compute some spacing data.
-		float halfAreaSize = AreaSize * 0.5f;
-		int nSamples = NSamples;
-		float denom = 1.0f / (nSamples - 1);
-		float sampleIncrement = AreaSize / (float)(nSamples - 1);
-
-		if (rend_DoSamples)
+		if (rend_DoSamples && gen_samples != null)
 		{
+			float sampleIncrement = rend_SampleSpaceIncrement;
 			foreach (var sampleI in rend_SampleIterator)
 			{
 				float value = gen_samples.Get(sampleI);
-				if (rend_Sample_IgnoreBelowThreshold && value < Threshold)
+				if (rend_Sample_IgnoreBelowThreshold && !gen_isSampleAbove.Get(sampleI))
 					continue;
 
 				Gizmos.color = new Color(value, value, value, rend_Sample_Alpha);
 
-				Vector3 pos = new Vector3(-halfAreaSize + (sampleIncrement * sampleI.x),
-										  -halfAreaSize + (sampleIncrement * sampleI.y),
-										  -halfAreaSize + (sampleIncrement * sampleI.z));
-				Gizmos.DrawSphere(pos, sampleIncrement * 0.5f * value);
+				Gizmos.DrawSphere(rend_SampleToWorldSpace(sampleI),
+								  sampleIncrement * 0.5f * value);
 			}
 		}
 
@@ -494,7 +600,6 @@ public class ASCGenerator : MonoBehaviour
 					var lign = gen_lignsAlongX[sampleI.y, sampleI.z];
 					Gizmos.color = new Color(1.0f, 0.0f, 0.0f, rend_Lign_Alpha);
 					rend_DrawSpans(lign, 0, 1, 2, new Vector2i(sampleI.y, sampleI.z),
-							       halfAreaSize, sampleIncrement,
 								   dike => dike.SimplestIndex,
 								   (a, b) => Gizmos.DrawLine(a, b));
 				}
@@ -503,7 +608,6 @@ public class ASCGenerator : MonoBehaviour
 					var lign = gen_lignsAlongY[sampleI.x, sampleI.z];
 					Gizmos.color = new Color(0.0f, 1.0f, 0.0f, rend_Lign_Alpha);
 					rend_DrawSpans(lign, 1, 0, 2, new Vector2i(sampleI.x, sampleI.z),
-							       halfAreaSize, sampleIncrement,
 							       dike => dike.SimplestIndex,
 							       (a, b) => Gizmos.DrawLine(a, b));
 				}
@@ -512,7 +616,6 @@ public class ASCGenerator : MonoBehaviour
 					var lign = gen_lignsAlongZ[sampleI.x, sampleI.y];
 					Gizmos.color = new Color(0.0f, 0.0f, 1.0f, rend_Lign_Alpha);
 					rend_DrawSpans(lign, 2, 0, 1, new Vector2i(sampleI.x, sampleI.y),
-							       halfAreaSize, sampleIncrement,
 							       dike => dike.SimplestIndex,
 							       (a, b) => Gizmos.DrawLine(a, b));
 				}
@@ -521,6 +624,8 @@ public class ASCGenerator : MonoBehaviour
 
 		if (rend_DoStrips)
 		{
+			float sampleIncrement = rend_SampleSpaceIncrement;
+
 			foreach (var sampleI in rend_SampleIterator)
 			{
 				//If this index is the beginning of a strip, render that strip.
@@ -528,9 +633,8 @@ public class ASCGenerator : MonoBehaviour
 					sampleI.y < gen_stripsAlongXY.GetLength(0))
 				{
 					var strip = gen_stripsAlongXY[sampleI.y, sampleI.z];
-					Gizmos.color = new Color(1.0f, 1.0f, 1.0f, rend_Strip_Alpha);
+					Gizmos.color = rend_Strip_Color;
 					rend_DrawSpans(strip, 0, 1, 2, new Vector2i(sampleI.y, sampleI.z),
-							       halfAreaSize, sampleIncrement,
 							       i => i,
 							   	   (a, b) =>
 								   {
@@ -543,6 +647,29 @@ public class ASCGenerator : MonoBehaviour
 																       (1.0f - (border * 2.0f)),
 																   0.0001f));
 								   });
+				}
+			}
+		}
+
+		if (rend_DoPadis)
+		{
+			if (gen_padiRectsPerXYFarm != null)
+			{
+				const float border = 0.1f;
+				Gizmos.color = rend_Padi_Color;
+
+				for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
+				{
+					foreach (var padi in gen_padiRectsPerXYFarm[z])
+					{
+						Vector3 min = rend_SampleToWorldSpace(padi.Min.x,
+															  padi.Min.y,
+															  z),
+								max = rend_SampleToWorldSpace(padi.Max.x - border,
+															  padi.Max.y - border,
+															  z);
+						Gizmos.DrawCube((max + min) * 0.5f, max - min);
+					}
 				}
 			}
 		}
