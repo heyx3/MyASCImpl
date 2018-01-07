@@ -377,19 +377,20 @@ MonoBehaviour:
     _Tex2DParams: []
   Threshold: 0.5
   rend_DoArea: 1
-  rend_DoSamples: 0
-  rend_DoLigns: 0
-  rend_Area_Alpha: 1
-  rend_Sample_Alpha: 0.75
+  rend_DoSamples: 1
+  rend_DoLigns: 1
+  rend_Area_Alpha: 0
+  rend_Sample_Alpha: 1
   rend_Sample_MinI:
-    x: 0
+    x: 4
     y: 0
-    z: 0
+    z: 4
   rend_Sample_MaxI:
-    x: 8
+    x: 5
     y: 8
-    z: 8
-  rend_Sample_IgnoreBelowThreshold: 0
+    z: 5
+  rend_Sample_IgnoreBelowThreshold: 1
+  rend_Lign_Alpha: 1
 --- !u!33 &1710042881
 MeshFilter:
   m_ObjectHideFlags: 0

@@ -71,6 +71,11 @@ public class ASCGenerator : MonoBehaviour
 			Simplicity = simplicity;
 			SimplestIndex = simplestIndex;
 		}
+
+		public override string ToString()
+		{
+			return "[" + Simplicity + ":" + SimplestIndex + "]";
+		}
 	}
 
 	/// <summary>
@@ -125,7 +130,7 @@ public class ASCGenerator : MonoBehaviour
 		/// The index in the binary tree of the first child of the given node.
 		/// The second child is the next index after that.
 		/// </summary>
-		public int IndexOfFirstChildNode(int nodeI) { return nodeI * 2; }
+		public int IndexOfFirstChildNode(int nodeI) { return (nodeI * 2) + 1; }
 		/// <summary>
 		/// Gets whether the given node is the first child of its parent.
 		/// This means that it and its parent share the same left edge in the lign.
@@ -133,20 +138,19 @@ public class ASCGenerator : MonoBehaviour
 		/// </summary>
 		public bool IsFirstChild(int nodeI) { return nodeI == 0 | (nodeI % 2) == 1; }
 		/// <summary>
+		/// Gets the index of the first node in the same layer of the tree as the given node.
+		/// </summary>
+		public int IndexOfFirstInLayer(int nodeI) { return (Mathf.NextPowerOfTwo(nodeI + 2) / 2) - 1; }
+		/// <summary>
 		/// Gets the range of samples that the given dike sits between.
 		/// </summary>
 		public void GetEdges(int nodeI, out int sampleMin, out int sampleMax)
 		{
-			//TODO: Figure this out and use it for drawing.
-			int firstNodeInRowI = 0;
-			int span = NSamples;
-			while (firstNodeInRowI < nodeI)
-			{
-				firstNodeInRowI = IndexOfFirstChildNode(firstNodeInRowI);
-				span /= 2;
-			}
+			int firstNodeI = IndexOfFirstInLayer(nodeI),
+				nSamples = (NSamples - 1) / (firstNodeI + 1);
 
-
+			sampleMin = (nodeI - firstNodeI) * nSamples;
+			sampleMax = sampleMin + nSamples;
 		}
 	}
 
@@ -160,7 +164,7 @@ public class ASCGenerator : MonoBehaviour
 	{
 		ligns = new Lign[gen_samples.GetLength(axis2), gen_samples.GetLength(axis3)];
 		int nSamples = gen_samples.GetLength(axis);
-		foreach (var lignPos2d in gen_lignsAlongX.AllIndices())
+		foreach (var lignPos2d in ligns.AllIndices())
 		{
 			var lign = new Lign(nSamples);
 
@@ -209,10 +213,11 @@ public class ASCGenerator : MonoBehaviour
 				//Compute occupancy.
 				for (int dikeI = firstNodeI; dikeI < (firstNodeI + nValues); ++dikeI)
 				{
+					Dike parent = lign.Values[dikeI];
+
 					int childI = lign.IndexOfFirstChildNode(dikeI);
 					Dike child1 = lign.Values[childI],
 						 child2 = lign.Values[childI + 1];
-					Dike parent = lign.Values[dikeI];
 
 					parent.Simplicity = (byte)(child1.Simplicity | child2.Simplicity);
 					lign.Values[dikeI] = parent;
@@ -278,7 +283,7 @@ public class ASCGenerator : MonoBehaviour
 
 								//If this node doesn't share its left edge with its parent,
 								//    stop here.
-								if (lign.IsFirstChild(parentNodeI))
+								if (!lign.IsFirstChild(parentNodeI))
 									break;
 							}
 						}
@@ -299,7 +304,7 @@ public class ASCGenerator : MonoBehaviour
 				}
 			}
 
-			gen_lignsAlongX.Set(lignPos2d, lign);
+			ligns.Set(lignPos2d, lign);
 		}
 	}
 
@@ -365,7 +370,7 @@ public class ASCGenerator : MonoBehaviour
 		}
 
 		//If samples haven't even been created yet, there's nothing else to render.
-		if (gen_samples == null)
+		if (!Application.isPlaying || gen_samples == null)
 			return;
 
 		//Compute some spacing data.
@@ -391,6 +396,10 @@ public class ASCGenerator : MonoBehaviour
 				Gizmos.DrawSphere(pos, sampleIncrement * 0.5f * value);
 			}
 		}
+
+		//If ligns haven't even been generated yet, there's nothing else to render.
+		if (gen_lignsAlongX == null)
+			return;
 
 		if (rend_DoLigns)
 		{
@@ -422,6 +431,8 @@ public class ASCGenerator : MonoBehaviour
 						Gizmos.color = new Color(1.0f, 0.0f, 0.0f, rend_Lign_Alpha);
 						Gizmos.DrawLine(new Vector3(sampleMinPosX, samplePosYZ.x, samplePosYZ.y),
 										new Vector3(sampleMaxPosX, samplePosYZ.x, samplePosYZ.y));
+
+						dikeI += 1;
 					}
 				}
 				if (sampleI.y == 0)
@@ -449,6 +460,8 @@ public class ASCGenerator : MonoBehaviour
 						Gizmos.color = new Color(0.0f, 1.0f, 0.0f, rend_Lign_Alpha);
 						Gizmos.DrawLine(new Vector3(samplePosXZ.x, sampleMinPosY, samplePosXZ.y),
 										new Vector3(samplePosXZ.x, sampleMaxPosY, samplePosXZ.y));
+
+						dikeI += 1;
 					}
 				}
 				if (sampleI.z == 0)
@@ -473,9 +486,11 @@ public class ASCGenerator : MonoBehaviour
 														  -halfAreaSize + (sampleI.y * sampleIncrement));
 
 						//Draw the dike.
-						Gizmos.color = new Color(0.0f, 1.0f, 0.0f, rend_Lign_Alpha);
+						Gizmos.color = new Color(0.0f, 0.0f, 1.0f, rend_Lign_Alpha);
 						Gizmos.DrawLine(new Vector3(samplePosXY.x, samplePosXY.y, sampleMinPosZ),
 										new Vector3(samplePosXY.x, samplePosXY.y, sampleMaxPosZ));
+
+						dikeI += 1;
 					}
 				}
 			}
