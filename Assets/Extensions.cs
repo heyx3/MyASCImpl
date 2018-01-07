@@ -1,4 +1,6 @@
-﻿using Array = System.Array;
+﻿using UnityEngine;
+
+using Array = System.Array;
 
 
 public static class MyExtensions
@@ -73,4 +75,49 @@ public static class Array3DExtensions
 																										   new Vector3i(array.SizeX(), y + 1, array.SizeZ())); }
 	public static Vector3i.Iterator AllIndicesZ<T>(this T[,,] array, int z) { return new Vector3i.Iterator(new Vector3i(0, 0, z),
 																										   new Vector3i(array.SizeX(), array.SizeY(), z + 1)); }
+}
+
+public static class VectorExtensions
+{
+	public static float Get(this Vector2 v, int i)
+	{
+		switch (i)
+		{
+			case 0: return v.x;
+			case 1: return v.y;
+			default: throw new System.NotImplementedException(i.ToString());
+		}
+	}
+	public static Vector2 Set(this Vector2 v, int i, float val)
+	{
+		switch (i)
+		{
+			case 0: v.x = val; break;
+			case 1: v.y = val; break;
+			default: throw new System.NotImplementedException(i.ToString());
+		}
+		return v;
+	}
+
+	public static float Get(this Vector3 v, int i)
+	{
+		switch (i)
+		{
+			case 0: return v.x;
+			case 1: return v.y;
+			case 2: return v.z;
+			default: throw new System.NotImplementedException(i.ToString());
+		}
+	}
+	public static Vector3 Set(this Vector3 v, int i, float val)
+	{
+		switch (i)
+		{
+			case 0: v.x = val; break;
+			case 1: v.y = val; break;
+			case 2: v.z = val; break;
+			default: throw new System.NotImplementedException(i.ToString());
+		}
+		return v;
+	}
 }

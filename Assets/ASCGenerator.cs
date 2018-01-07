@@ -4,6 +4,14 @@ using System.Linq;
 using UnityEngine;
 
 
+//A Lign is a binary tree of the dikes that can span it.
+using Lign = ASCGenerator.SpanTree<ASCGenerator.Dike>;
+
+//A Strip is a binary tree of plots, which are two dikes laid on top of each other.
+//Unlike the dikes, we don't need to store a "simplicity" value.
+using Strip = ASCGenerator.SpanTree<ushort>;
+
+
 [RequireComponent(typeof(MeshFilter))]
 public class ASCGenerator : MonoBehaviour
 {
@@ -34,6 +42,86 @@ public class ASCGenerator : MonoBehaviour
 
 	//Data structures are stored as fields so that they can be drawn as Gizmos for debugging.
 
+	/// <summary>
+	/// An optimized binary tree of "spans".
+	/// A "span" covers some range of "samples".
+	/// The root of the tree is a "span" covering every sample.
+	///	The root's 2 children are spans that each cover half of the samples, and so on.
+	/// </summary>
+	public struct SpanTree<Data>
+	{
+		/// <summary>
+		/// The binary tree, stored as an array for best performance.
+		/// The first value is the single span covering all samples.
+		/// The second and third values are the two spans
+		///     covering the first and last half of the samples, respectively.
+		/// The last [NSamples-1] values are the tiny 2-wide spans in order.
+		/// </summary>
+		public Data[] Values { get; private set; }
+		/// <summary>
+		/// The number of samples this instance spans.
+		/// </summary>
+		public int NSamples { get; private set; }
+
+		/// <summary>
+		/// Creates a tree of "spans" for the given number of samples.
+		/// </summary>
+		/// <param name="nSamples">Must be one more than a power of 2!</param>
+		public SpanTree(int nSamples)
+		{
+			NSamples = nSamples;
+			UnityEngine.Assertions.Assert.IsTrue(Mathf.IsPowerOfTwo(nSamples - 1),
+												 nSamples.ToString() + "isn't some 2^n + 1");
+
+			//Calculate the number of elements in the binary tree.
+			int size = ((nSamples - 1) * 2) - 1;
+			Values = new Data[size];
+		}
+
+		//Below are utility methods that tell you about specific nodes based on their index.
+		/// <summary>
+		/// The index in the binary tree of the first span of smallest size (i.e. size 2).
+		/// This span touches the left-most edge of the sample range,
+		///     as does its parent, grandparent, etc. all the way back to the root.
+		/// </summary>
+		public int IndexOfFirstLeafNode { get { return Values.Length / 2; } }
+		/// <summary>
+		/// The index in the binary tree of the given node's parent.
+		/// </summary>
+		public int IndexOfParentNode(int spanI) { return (spanI - 1) / 2; }
+		/// <summary>
+		/// The index in the binary tree of the first child of the given node.
+		/// The second child is the next index after that.
+		/// </summary>
+		public int IndexOfFirstChildNode(int spanI) { return (spanI * 2) + 1; }
+		/// <summary>
+		/// Gets whether the given node is the first child of its parent.
+		/// This means that it and its parent share the same left edge of their spans.
+		/// The root node is considered a "first child".
+		/// </summary>
+		public bool IsFirstChild(int spanI) { return spanI == 0 | (spanI % 2) == 1; }
+		/// <summary>
+		/// Gets the index of the first node in the same layer of the tree as the given node.
+		/// </summary>
+		public int IndexOfFirstInLayer(int spanI) { return (Mathf.NextPowerOfTwo(spanI + 2) / 2) - 1; }
+		/// <summary>
+		/// Gets whether the given span reaches to the end of the samples.
+		/// </summary>
+		public bool IsLastInLayer(int spanI) { return Mathf.IsPowerOfTwo(spanI + 2); }
+		/// <summary>
+		/// Gets the range of samples that the given span sits between.
+		/// </summary>
+		public void GetEdges(int spanI, out int sampleMin, out int sampleMax)
+		{
+			int firstNodeI = IndexOfFirstInLayer(spanI),
+				nSamples = (NSamples - 1) / (firstNodeI + 1);
+
+			sampleMin = (spanI - firstNodeI) * nSamples;
+			sampleMax = sampleMin + nSamples;
+		}
+	}
+
+
 	#region Sampling
 
 	private float[,,] gen_samples;
@@ -46,7 +134,7 @@ public class ASCGenerator : MonoBehaviour
 	/// <summary>
 	/// A 1D area in the samples array.
 	/// </summary>
-	private struct Dike
+	public struct Dike
 	{
 		/// <summary>
 		/// A 2-bit flag indicating how "simple" this dike is.
@@ -75,82 +163,6 @@ public class ASCGenerator : MonoBehaviour
 		public override string ToString()
 		{
 			return "[" + Simplicity + ":" + SimplestIndex + "]";
-		}
-	}
-
-	/// <summary>
-	/// A line of Dikes, covering all samples along that line.
-	/// </summary>
-	private struct Lign
-	{
-		/// <summary>
-		/// A binary tree of the different-size dikes covering this lign, large to small.
-		/// Stored in an array for performance reasons.
-		/// The first value is the single dike covering this entire lign.
-		/// The second and third values are the two dikes covering the first and last half of the lign,
-		///     respectively.
-		/// The last [NSamples-1] values are the tiny 2-wide dikes.
-		/// </summary>
-		public Dike[] Values { get; private set; }
-		/// <summary>
-		/// The number of samples this lign spans.
-		/// </summary>
-		public int NSamples { get; private set; }
-
-		/// <summary>
-		/// Creates a lign covering the given number of samples.
-		/// </summary>
-		/// <param name="nSamples">Must be one more than a power of 2!</param>
-		public Lign(int nSamples)
-		{
-			NSamples = nSamples;
-			UnityEngine.Assertions.Assert.IsTrue(Mathf.IsPowerOfTwo(nSamples - 1),
-												 nSamples.ToString() + "isn't some 2^n + 1");
-
-			//Calculate the number of elements in the binary tree
-			//    of the different-size dikes covering this lign.
-			int size = ((nSamples - 1) * 2) - 1;
-
-			//Initialize the binary tree.
-			Values = new Dike[size];
-			for (int i = 0; i < Values.Length; ++i)
-			    Values[i] = new Dike(0, ushort.MaxValue);
-		}
-
-		/// <summary>
-		/// The index in the binary tree of the first dike of smallest size (i.e. size 2).
-		/// This dike touches the left-most edge of the Lign, as does its parent, grandparent, etc.
-		/// </summary>
-		public int IndexOfFirstLeafNode { get { return Values.Length / 2; } }
-		/// <summary>
-		/// The index in the binary tree of the given node's parent.
-		/// </summary>
-		public int IndexOfParentNode(int nodeI) { return (nodeI - 1) / 2; }
-		/// <summary>
-		/// The index in the binary tree of the first child of the given node.
-		/// The second child is the next index after that.
-		/// </summary>
-		public int IndexOfFirstChildNode(int nodeI) { return (nodeI * 2) + 1; }
-		/// <summary>
-		/// Gets whether the given node is the first child of its parent.
-		/// This means that it and its parent share the same left edge in the lign.
-		/// The root node is considered a "first child".
-		/// </summary>
-		public bool IsFirstChild(int nodeI) { return nodeI == 0 | (nodeI % 2) == 1; }
-		/// <summary>
-		/// Gets the index of the first node in the same layer of the tree as the given node.
-		/// </summary>
-		public int IndexOfFirstInLayer(int nodeI) { return (Mathf.NextPowerOfTwo(nodeI + 2) / 2) - 1; }
-		/// <summary>
-		/// Gets the range of samples that the given dike sits between.
-		/// </summary>
-		public void GetEdges(int nodeI, out int sampleMin, out int sampleMax)
-		{
-			int firstNodeI = IndexOfFirstInLayer(nodeI),
-				nSamples = (NSamples - 1) / (firstNodeI + 1);
-
-			sampleMin = (nodeI - firstNodeI) * nSamples;
-			sampleMax = sampleMin + nSamples;
 		}
 	}
 
@@ -310,6 +322,36 @@ public class ASCGenerator : MonoBehaviour
 
 	#endregion
 
+	#region Strip
+
+	private Strip[,] gen_stripsAlongXY;
+
+	private void Algo_CalcStrips(out Strip[,] strips, Lign[,] ligns)
+	{
+		strips = new Strip[gen_samples.GetLength(1) - 1,
+						   gen_samples.GetLength(2)];
+		foreach (var stripPos2D in strips.AllIndices())
+		{
+			var strip = new Strip(gen_samples.GetLength(0));
+
+			//Each lign has its own path through the largest simple dikes.
+			//Merge these largest simple dikes together into largest simple "plots"
+			//    by always picking the smaller of the two dikes.
+			Lign lign1 = ligns.Get(stripPos2D),
+				 lign2 = ligns.Get(stripPos2D.MoreX);
+
+			for (int i = 0; i < strip.Values.Length; ++i)
+			{
+				strip.Values[i] = Math.Max(lign1.Values[i].SimplestIndex,
+										   lign2.Values[i].SimplestIndex);
+			}
+
+			strips.Set(stripPos2D, strip);
+		}
+	}
+
+	#endregion
+
 	#endregion
 
 	//Runs the generation algorithm, spread across multiple frames.
@@ -333,10 +375,15 @@ public class ASCGenerator : MonoBehaviour
 
 		//Create the ligns.
 		Algo_CalcLigns(out gen_lignsAlongX, 0, 1, 2);
+		yield return null;
 		Algo_CalcLigns(out gen_lignsAlongY, 1, 0, 2);
+		yield return null;
 		Algo_CalcLigns(out gen_lignsAlongZ, 2, 0, 1);
 
 		yield return null;
+
+		//Create strips.
+		Algo_CalcStrips(out gen_stripsAlongXY, gen_lignsAlongX);
 	}
 
 
@@ -345,7 +392,8 @@ public class ASCGenerator : MonoBehaviour
 	//Flags for rendering different stages of the algorithm.
 	public bool rend_DoArea = true,
 				rend_DoSamples = false,
-				rend_DoLigns = false;
+				rend_DoLigns = false,
+				rend_DoStrips = false;
 
 	public float rend_Area_Alpha = 0.2f;
 
@@ -356,8 +404,48 @@ public class ASCGenerator : MonoBehaviour
 
 	public float rend_Lign_Alpha = 0.5f;
 
+	public float rend_Strip_Alpha = 0.5f;
+
 	private Vector3i.Iterator rend_SampleIterator
 		{ get { return new Vector3i.Iterator(rend_Sample_MinI, rend_Sample_MaxI + 1); } }
+
+	private void rend_DrawSpans<T>(SpanTree<T> spanTree,
+								   int axis, int axis2, int axis3, Vector2i pos23,
+								   float halfAreaSize, float sampleIncrement,
+								   Func<T, ushort> getSimplestIndex,
+								   Action<Vector3, Vector3> spanDrawer)
+	{
+		//Render all the largest simple dikes needed to cover the lign.
+		int spanI = 0;
+		int sampleMin,
+			sampleMax = -1;
+		while (sampleMax < spanTree.NSamples - 1)
+		{
+			//Get the samples this dike spans.
+			spanI = getSimplestIndex(spanTree.Values[spanI]);
+			spanTree.GetEdges(spanI, out sampleMin, out sampleMax);
+
+			//Calculate the world-space position of the dike.
+			const float border = 0.1f;
+			float sampleMinPos1 = -halfAreaSize + ((sampleMin + border) * sampleIncrement),
+				  sampleMaxPos1 = -halfAreaSize + ((sampleMax - border) * sampleIncrement);
+			Vector2 samplePos23 = new Vector2(-halfAreaSize + (pos23.x * sampleIncrement),
+											  -halfAreaSize + (pos23.y * sampleIncrement));
+
+			//Draw the dike.
+			Vector3 lineStart = new Vector3(),
+					lineEnd = new Vector3();
+			lineStart[axis] = sampleMinPos1;
+			lineStart[axis2] = samplePos23.x;
+			lineStart[axis3] = samplePos23.y;
+			lineEnd[axis] = sampleMaxPos1;
+			lineEnd[axis2] = samplePos23.x;
+			lineEnd[axis3] = samplePos23.y;
+			spanDrawer(lineStart, lineEnd);
+
+			spanI += 1;
+		}
+	}
 
 	#endregion
 
@@ -379,7 +467,6 @@ public class ASCGenerator : MonoBehaviour
 		float denom = 1.0f / (nSamples - 1);
 		float sampleIncrement = AreaSize / (float)(nSamples - 1);
 
-
 		if (rend_DoSamples)
 		{
 			foreach (var sampleI in rend_SampleIterator)
@@ -397,101 +484,65 @@ public class ASCGenerator : MonoBehaviour
 			}
 		}
 
-		//If ligns haven't even been generated yet, there's nothing else to render.
-		if (gen_lignsAlongX == null)
-			return;
-
 		if (rend_DoLigns)
 		{
 			foreach (var sampleI in rend_SampleIterator)
 			{
 				//If this index is the beginning of a lign, render that lign.
-				if (sampleI.x == 0)
+				if (gen_lignsAlongX != null && sampleI.x == 0)
 				{
 					var lign = gen_lignsAlongX[sampleI.y, sampleI.z];
-
-					//Render all the largest simple dikes needed to cover the lign.
-					int dikeI = 0;
-					int sampleMin,
-						sampleMax = -1;
-					while (sampleMax < nSamples - 1)
-					{
-						//Get the samples this dike spans.
-						dikeI = lign.Values[dikeI].SimplestIndex;
-						lign.GetEdges(dikeI, out sampleMin, out sampleMax);
-
-						//Calculate the world-space position of the dike.
-						const float border = 0.1f;
-						float sampleMinPosX = -halfAreaSize + ((sampleMin + border) * sampleIncrement),
-							  sampleMaxPosX = -halfAreaSize + ((sampleMax - border) * sampleIncrement);
-						Vector2 samplePosYZ = new Vector2(-halfAreaSize + (sampleI.y * sampleIncrement),
-														  -halfAreaSize + (sampleI.z * sampleIncrement));
-
-						//Draw the dike.
-						Gizmos.color = new Color(1.0f, 0.0f, 0.0f, rend_Lign_Alpha);
-						Gizmos.DrawLine(new Vector3(sampleMinPosX, samplePosYZ.x, samplePosYZ.y),
-										new Vector3(sampleMaxPosX, samplePosYZ.x, samplePosYZ.y));
-
-						dikeI += 1;
-					}
+					Gizmos.color = new Color(1.0f, 0.0f, 0.0f, rend_Lign_Alpha);
+					rend_DrawSpans(lign, 0, 1, 2, new Vector2i(sampleI.y, sampleI.z),
+							       halfAreaSize, sampleIncrement,
+								   dike => dike.SimplestIndex,
+								   (a, b) => Gizmos.DrawLine(a, b));
 				}
-				if (sampleI.y == 0)
+				if (gen_lignsAlongY != null && sampleI.y == 0)
 				{
 					var lign = gen_lignsAlongY[sampleI.x, sampleI.z];
-
-					//Render all the largest simple dikes needed to cover the lign.
-					int dikeI = 0;
-					int sampleMin,
-						sampleMax = -1;
-					while (sampleMax < nSamples - 1)
-					{
-						//Get the samples this dike spans.
-						dikeI = lign.Values[dikeI].SimplestIndex;
-						lign.GetEdges(dikeI, out sampleMin, out sampleMax);
-
-						//Calculate the world-space position of the dike.
-						const float border = 0.1f;
-						float sampleMinPosY = -halfAreaSize + ((sampleMin + border) * sampleIncrement),
-							  sampleMaxPosY = -halfAreaSize + ((sampleMax - border) * sampleIncrement);
-						Vector2 samplePosXZ = new Vector2(-halfAreaSize + (sampleI.x * sampleIncrement),
-														  -halfAreaSize + (sampleI.z * sampleIncrement));
-
-						//Draw the dike.
-						Gizmos.color = new Color(0.0f, 1.0f, 0.0f, rend_Lign_Alpha);
-						Gizmos.DrawLine(new Vector3(samplePosXZ.x, sampleMinPosY, samplePosXZ.y),
-										new Vector3(samplePosXZ.x, sampleMaxPosY, samplePosXZ.y));
-
-						dikeI += 1;
-					}
+					Gizmos.color = new Color(0.0f, 1.0f, 0.0f, rend_Lign_Alpha);
+					rend_DrawSpans(lign, 1, 0, 2, new Vector2i(sampleI.x, sampleI.z),
+							       halfAreaSize, sampleIncrement,
+							       dike => dike.SimplestIndex,
+							       (a, b) => Gizmos.DrawLine(a, b));
 				}
-				if (sampleI.z == 0)
+				if (gen_lignsAlongZ != null && sampleI.z == 0)
 				{
 					var lign = gen_lignsAlongZ[sampleI.x, sampleI.y];
+					Gizmos.color = new Color(0.0f, 0.0f, 1.0f, rend_Lign_Alpha);
+					rend_DrawSpans(lign, 2, 0, 1, new Vector2i(sampleI.x, sampleI.y),
+							       halfAreaSize, sampleIncrement,
+							       dike => dike.SimplestIndex,
+							       (a, b) => Gizmos.DrawLine(a, b));
+				}
+			}
+		}
 
-					//Render all the largest simple dikes needed to cover the lign.
-					int dikeI = 0;
-					int sampleMin,
-						sampleMax = -1;
-					while (sampleMax < nSamples - 1)
-					{
-						//Get the samples this dike spans.
-						dikeI = lign.Values[dikeI].SimplestIndex;
-						lign.GetEdges(dikeI, out sampleMin, out sampleMax);
-
-						//Calculate the world-space position of the dike.
-						const float border = 0.1f;
-						float sampleMinPosZ = -halfAreaSize + ((sampleMin + border) * sampleIncrement),
-							  sampleMaxPosZ = -halfAreaSize + ((sampleMax - border) * sampleIncrement);
-						Vector2 samplePosXY = new Vector2(-halfAreaSize + (sampleI.x * sampleIncrement),
-														  -halfAreaSize + (sampleI.y * sampleIncrement));
-
-						//Draw the dike.
-						Gizmos.color = new Color(0.0f, 0.0f, 1.0f, rend_Lign_Alpha);
-						Gizmos.DrawLine(new Vector3(samplePosXY.x, samplePosXY.y, sampleMinPosZ),
-										new Vector3(samplePosXY.x, samplePosXY.y, sampleMaxPosZ));
-
-						dikeI += 1;
-					}
+		if (rend_DoStrips)
+		{
+			foreach (var sampleI in rend_SampleIterator)
+			{
+				//If this index is the beginning of a strip, render that strip.
+				if (gen_stripsAlongXY != null && sampleI.x == 0 &&
+					sampleI.y < gen_stripsAlongXY.GetLength(0))
+				{
+					var strip = gen_stripsAlongXY[sampleI.y, sampleI.z];
+					Gizmos.color = new Color(1.0f, 1.0f, 1.0f, rend_Strip_Alpha);
+					rend_DrawSpans(strip, 0, 1, 2, new Vector2i(sampleI.y, sampleI.z),
+							       halfAreaSize, sampleIncrement,
+							       i => i,
+							   	   (a, b) =>
+								   {
+								       const float border = 0.1f;
+									   Gizmos.DrawCube(new Vector3((a.x + b.x) * 0.5f,
+																   a.y + (sampleIncrement * 0.5f),
+																   a.z),
+													   new Vector3(Mathf.Abs(b.x - a.x),
+													 			   sampleIncrement *
+																       (1.0f - (border * 2.0f)),
+																   0.0001f));
+								   });
 				}
 			}
 		}
