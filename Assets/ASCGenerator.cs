@@ -119,6 +119,14 @@ public class ASCGenerator : MonoBehaviour
 			sampleMin = (spanI - firstNodeI) * nSamples;
 			sampleMax = sampleMin + nSamples;
 		}
+		/// <summary>
+		/// Gets the largest span that starts at exactly the given min sample
+		///     and ends no later than the given max sample.
+		/// </summary>
+		public int GetLargestSpan(int minSample, int maxSample)
+		{
+			TODO: Implement.
+		}
 	}
 
 
@@ -355,6 +363,7 @@ public class ASCGenerator : MonoBehaviour
 	#region Padis
 
 	List<Rect2i>[] gen_padiRectsPerXYFarm;
+	List<Rect2i> gen_newPadis;
 
 	#endregion
 
@@ -394,14 +403,14 @@ public class ASCGenerator : MonoBehaviour
 		yield return null;
 
 		//Create padis.
+		//TODO: Instead of this stuff with rectangle lists, just use the combination of X and Y SpanTrees to implicitly define the rectangles.
 		gen_padiRectsPerXYFarm = new List<Rect2i>[gen_samples.SizeZ()];
-		List<Rect2i> newPadis = new List<Rect2i>(gen_samples.SizeX());
+		gen_newPadis = new List<Rect2i>(gen_samples.SizeX());
 		for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
 		{
 			//Allocate the list with a good first estimate of how many elements it will have.
 			var padis = new List<Rect2i>(gen_samples.SizeX() * gen_samples.SizeY() / 2);
 			gen_padiRectsPerXYFarm[z] = padis;
-
 			//For every strip in the farm...
 			for (int stripI = 0; stripI < gen_stripsAlongXY.SizeX(); ++stripI)
 			{
@@ -413,7 +422,7 @@ public class ASCGenerator : MonoBehaviour
 				{
 					plotI = strip.Values[plotI];
 
-					//Start with the plot's rectangle.
+					//Star the padi with just the plot's rectangle.
 					int minX, maxX;
 					strip.GetEdges(plotI, out minX, out maxX);
 					Rect2i padi = new Rect2i(new Vector2i(minX, stripI),
@@ -432,16 +441,43 @@ public class ASCGenerator : MonoBehaviour
 					}
 
 					//Split up the padi so it conforms to the binary tree structure.
-					newPadis.Clear();
-					newPadis.Add(padi);
-					for (int newPadiI = 0; newPadiI < newPadis.Count; ++newPadiI)
+					gen_newPadis.Clear();
+					gen_newPadis.Add(padi);
+					for (int newPadiI = 0; newPadiI < gen_newPadis.Count; ++newPadiI)
 					{
-						var newPadi = newPadis[newPadiI];
-						TODO: Implement.
+						var newPadi = gen_newPadis[newPadiI];
+
+						//For each vertical lign, see whether it breaks up this padi.
+						for (int lignI = newPadi.Min.x; lignI <= newPadi.Max.x; ++lignI)
+						{
+							var lign = gen_lignsAlongY[lignI, z];
+
+							//Get the largest simple dike that starts at the beginning of the padi.
+							int dikeI = lign.GetLargestSpan(newPadi.Min.y, newPadi.Max.y);
+							int dikeMin, dikeMax;
+							lign.GetEdges(dikeI, out dikeMin, out dikeMax);
+
+							//If the end of the dike is before the end of the padi,
+							//    split the padi there.
+							if (dikeMax > newPadi.Max.y)
+							{
+								//We know the first part of the new padi fits in a simple dike,
+								//    so just replace the current padi with it.
+								gen_newPadis[newPadiI] = new Rect2i(newPadi.Min,
+																	new Vector2i(newPadi.Max.x,
+																				 dikeMax));
+								//The second part of the new padi goes at the end of the list
+								//    so that this algorithm will check it.
+								gen_newPadis.Add(new Rect2i(new Vector2i(newPadi.Min.x, dikeMax),
+															newPadi.Max));
+								break;
+							}
+						}
 					}
 
 					//For each padi, try to add it to the list.
-					foreach (var newPadi in newPadis)
+					//TODO: Would my BVH structure work better here?
+					foreach (var newPadi in gen_newPadis)
 					{
 						bool shouldDrop = false;
 
