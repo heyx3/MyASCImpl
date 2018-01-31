@@ -45,7 +45,7 @@ public class ASCGenerator : MonoBehaviour
 	/// <summary>
 	/// An optimized binary tree of "spans".
 	/// A "span" covers some range of "samples".
-	/// The root of the tree is a "span" covering every sample.
+	/// The root of the tree is a "span" covering all samples.
 	///	The root's 2 children are spans that each cover half of the samples, and so on.
 	/// </summary>
 	public struct SpanTree<Data>
@@ -123,9 +123,31 @@ public class ASCGenerator : MonoBehaviour
 		/// Gets the largest span that starts at exactly the given min sample
 		///     and ends no later than the given max sample.
 		/// </summary>
-		public int GetLargestSpan(int minSample, int maxSample)
+		public int GetLargestSpan(int minSampleI, int maxSampleI)
 		{
-			TODO: Implement.
+			//Shortcut: if minSample is odd, it's longest span will be the leaf node.
+			if (minSampleI % 2 == 1)
+				return IndexOfFirstLeafNode + minSampleI;
+
+			//Start at the root and work downward until we find it.
+			int spanI = 0,
+				spanStart = 0,
+				spanEnd = NSamples - 1,
+				spanMid = spanEnd / 2;
+			while (spanStart != minSampleI)
+			{
+				if (spanMid <= minSampleI)
+				{
+					spanI = IndexOfFirstChildNode(spanI) + 1;
+					spanStart = spanMid;
+				}
+				else
+				{
+					spanI = IndexOfFirstChildNode(spanI);
+					spanEnd = spanMid;
+				}
+			}
+			return spanI;
 		}
 	}
 
@@ -422,7 +444,7 @@ public class ASCGenerator : MonoBehaviour
 				{
 					plotI = strip.Values[plotI];
 
-					//Star the padi with just the plot's rectangle.
+					//Start the padi with just the plot's rectangle.
 					int minX, maxX;
 					strip.GetEdges(plotI, out minX, out maxX);
 					Rect2i padi = new Rect2i(new Vector2i(minX, stripI),
@@ -452,24 +474,36 @@ public class ASCGenerator : MonoBehaviour
 						{
 							var lign = gen_lignsAlongY[lignI, z];
 
-							//Get the largest simple dike that starts at the beginning of the padi.
+							//Get the largest dike that starts at the beginning of the padi
+							//    and doesn't pass over the end of it.
 							int dikeI = lign.GetLargestSpan(newPadi.Min.y, newPadi.Max.y);
 							int dikeMin, dikeMax;
 							lign.GetEdges(dikeI, out dikeMin, out dikeMax);
 
-							//If the end of the dike is before the end of the padi,
-							//    split the padi there.
-							if (dikeMax > newPadi.Max.y)
+							//If the dike isn't simple, split the padi.
+							bool isSimple = lign.Values[dikeI].SimplestIndex > dikeI;
+							if (!isSimple)
 							{
+								int splitPoint = (dikeMin + dikeMax) / 2;
+								Rect2i newPadi1 = new Rect2i(newPadi.Min,
+															 new Vector2i(newPadi.Max.x, splitPoint)),
+									   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, splitPoint),
+															 newPadi.Max);
+							}
+							//Otherwise, if the padi sticks out past the end of the dike, split the padi.
+							else if (dikeMax > newPadi.Max.y)
+							{
+								Rect2i newPadi1 = new Rect2i(newPadi.Min,
+															 new Vector2i(newPadi.Max.x, dikeMax)),
+									   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, dikeMax),
+															 newPadi.Max);
+
 								//We know the first part of the new padi fits in a simple dike,
 								//    so just replace the current padi with it.
-								gen_newPadis[newPadiI] = new Rect2i(newPadi.Min,
-																	new Vector2i(newPadi.Max.x,
-																				 dikeMax));
+								gen_newPadis[newPadiI] = newPadi1;
 								//The second part of the new padi goes at the end of the list
 								//    so that this algorithm will check it.
-								gen_newPadis.Add(new Rect2i(new Vector2i(newPadi.Min.x, dikeMax),
-															newPadi.Max));
+								gen_newPadis.Add(newPadi2);
 								break;
 							}
 						}
@@ -482,7 +516,7 @@ public class ASCGenerator : MonoBehaviour
 						bool shouldDrop = false;
 
 						//See if it interacts with other padis.
-						for (int oldPadiI = 0; oldPadiI < padis.Count; ++oldPadiI)
+						for (int oldPadiI = 0; oldPadiI < nCurrentPadis; ++oldPadiI)
 						{
 							var oldPadi = padis[oldPadiI];
 							//If a current padi totally contains this one,
