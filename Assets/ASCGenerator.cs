@@ -511,36 +511,75 @@ public class ASCGenerator : MonoBehaviour
 
 					//For each padi, try to add it to the list.
 					//TODO: Would my BVH structure work better here?
-					foreach (var newPadi in gen_newPadis)
+					int nCurrentPadis = padis.Count; //Ignore the new padis that get added.
+					for (int newPadiI = 0; newPadiI < gen_newPadis.Count; ++newPadiI)
 					{
+						var newPadi = gen_newPadis[newPadiI];
 						bool shouldDrop = false;
 
 						//See if it interacts with other padis.
 						for (int oldPadiI = 0; oldPadiI < nCurrentPadis; ++oldPadiI)
 						{
 							var oldPadi = padis[oldPadiI];
-							//If a current padi totally contains this one,
+							//If the other padi totally contains this one,
 							//    then this one isn't necessary.
 							if (oldPadi.Contains(newPadi))
 							{
 								shouldDrop = true;
 								break;
 							}
-							//If this padi totally contains a current one,
-							//    then the current one isn't necessary.
+							//If this padi totally contains the other one,
+							//    then the other one isn't necessary.
 							else if (newPadi.Contains(oldPadi))
 							{
 								padis.RemoveAt(oldPadiI);
 								oldPadiI -= 1;
 								continue;
 							}
-							//If the two padis just touch a bit, they need to be clipped.
+							//If the two padis just touch a bit, separate this one.
 							else if (newPadi.Touches(oldPadi))
 							{
-								TODO: Implement.
+								//If this padi enters the other one's left side,
+								//    cut off this padi's left side.
+								if (newPadi.Max.x < oldPadi.Max.x)
+								{
+									//Add the left side of this padi to be checked later.
+									int oldMaxX = newPadi.Max.x;
+									newPadi.Max.x = oldPadi.Min.x;
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.x > 0);
+									gen_newPadis.Add(newPadi);
+
+									//Update this padi to just be the right side.
+									newPadi = new Rect2i(new Vector2i(oldPadi.Min.x, newPadi.Min.y),
+														 new Vector2i(oldMaxX, newPadi.Max.y));
+								}
+								//Otherwise, cut off this padi's right side.
+								else
+								{
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Min.x >= oldPadi.Min.x);
+
+									//Add the right side of this padi to be checked later.
+									int oldMinX = newPadi.Min.x;
+									newPadi.Min.x = oldPadi.Max.x;
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.x > 0);
+									gen_newPadis.Add(newPadi);
+
+									//Update this padi to just be the left side.
+									newPadi = new Rect2i(new Vector2i(oldMinX, newPadi.Min.y),
+														 new Vector2i(oldPadi.Max.x, newPadi.Max.y));
+								}
+
+								//TODO: Do the same with the top/bottom sides.
+
+								//Now that we've cut up the new padi,
+								//    everything left should be inside the other padi.
+								UnityEngine.Assertions.Assert.IsTrue(oldPadi.Contains(newPadi));
+								shouldDrop = true;
+								break;
 							}
 						}
 
+						//If this padi is clear, add it to the final list.
 						if (!shouldDrop)
 							padis.Add(newPadi);
 					}
@@ -552,6 +591,7 @@ public class ASCGenerator : MonoBehaviour
 				}
 			}
 		}
+		//TODO: Convert the padis to their more-efficient binary tree form.
 	}
 
 

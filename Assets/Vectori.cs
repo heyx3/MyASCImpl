@@ -140,8 +140,8 @@ public struct Rect2i : System.IEquatable<Rect2i>
 	{
 		//If one rectangle is on the left or above the other, they do not touch.
 		//Otherwise, they must be touching.
-		return !(Min.x > r.Max.x | Max.x < r.Min.x |
-				 Min.y > r.Max.y | Max.y < r.Min.y);
+		return !(Min.x >= r.Max.x | Max.x <= r.Min.x |
+				 Min.y >= r.Max.y | Max.y <= r.Min.y);
 	}
 
 	public override string ToString()
