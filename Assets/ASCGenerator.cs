@@ -352,7 +352,7 @@ public class ASCGenerator : MonoBehaviour
 
 	#endregion
 
-	#region Strip
+	#region Strips
 
 	private Strip[,] gen_stripsAlongXY;
 
@@ -384,8 +384,10 @@ public class ASCGenerator : MonoBehaviour
 
 	#region Padis
 
-	List<Rect2i>[] gen_padiRectsPerXYFarm;
-	List<Rect2i> gen_newPadis;
+	private List<Rect2i> gen_newPadis;
+	private List<Rect2i>[] gen_padiRectsPerXYFarm;
+	private SpanTree<ushort>[,] gen_padiRectsAlongX,
+								gen_padiRectsAlongY;
 
 	#endregion
 
@@ -425,7 +427,6 @@ public class ASCGenerator : MonoBehaviour
 		yield return null;
 
 		//Create padis.
-		//TODO: Instead of this stuff with rectangle lists, just use the combination of X and Y SpanTrees to implicitly define the rectangles.
 		gen_padiRectsPerXYFarm = new List<Rect2i>[gen_samples.SizeZ()];
 		gen_newPadis = new List<Rect2i>(gen_samples.SizeX());
 		for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
@@ -489,6 +490,12 @@ public class ASCGenerator : MonoBehaviour
 															 new Vector2i(newPadi.Max.x, splitPoint)),
 									   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, splitPoint),
 															 newPadi.Max);
+
+								//Replace this padi with the first half and keep checking.
+								gen_newPadis[newPadiI] = newPadi1;
+								newPadi = newPadi1;
+								//Stick the second padi at the end of the list to check it later.
+								gen_newPadis.Add(newPadi2);
 							}
 							//Otherwise, if the padi sticks out past the end of the dike, split the padi.
 							else if (dikeMax > newPadi.Max.y)
@@ -501,6 +508,7 @@ public class ASCGenerator : MonoBehaviour
 								//We know the first part of the new padi fits in a simple dike,
 								//    so just replace the current padi with it.
 								gen_newPadis[newPadiI] = newPadi1;
+								newPadi = newPadi1;
 								//The second part of the new padi goes at the end of the list
 								//    so that this algorithm will check it.
 								gen_newPadis.Add(newPadi2);
@@ -569,7 +577,35 @@ public class ASCGenerator : MonoBehaviour
 														 new Vector2i(oldPadi.Max.x, newPadi.Max.y));
 								}
 
-								//TODO: Do the same with the top/bottom sides.
+								//If this new padi enters the other one's top side,
+								//    cut off this padi's top side.
+								if (newPadi.Max.y < oldPadi.Max.y)
+								{
+									//Add the top side of this padi to be checked later.
+									int oldMaxY = newPadi.Max.y;
+									newPadi.Max.y = oldPadi.Min.y;
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.y > 0);
+									gen_newPadis.Add(newPadi);
+
+									//Update this padi to just be the bottom side.
+									newPadi = new Rect2i(new Vector2i(newPadi.Min.x, oldPadi.Min.y),
+														 new Vector2i(newPadi.Max.x, oldMaxY));
+								}
+								//Otherwise, cut off this padi's bottom side.
+								else
+								{
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Min.y >= oldPadi.Min.y);
+
+									//Add the bottom side of this padi to be checked later.
+									int oldMinY = newPadi.Min.y;
+									newPadi.Min.y = oldPadi.Max.y;
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.y > 0);
+									gen_newPadis.Add(newPadi);
+
+									//Update this padi to just be the top side.
+									newPadi = new Rect2i(new Vector2i(newPadi.Min.x, oldMinY),
+														 new Vector2i(newPadi.Max.x, oldPadi.Max.y));
+								}
 
 								//Now that we've cut up the new padi,
 								//    everything left should be inside the other padi.
@@ -591,7 +627,15 @@ public class ASCGenerator : MonoBehaviour
 				}
 			}
 		}
-		//TODO: Convert the padis to their more-efficient binary tree form.
+
+
+		//Convert the padis to their more-efficient binary tree form.
+		gen_padiRectsAlongX = new SpanTree<ushort>[gen_samples.GetLength(1), gen_samples.GetLength(2)];
+		gen_padiRectsAlongY = new SpanTree<ushort>[gen_samples.GetLength(0), gen_samples.GetLength(2)];
+		for (int padiZ = 0; padiZ < gen_padiRectsPerXYFarm.Length; ++padiZ)
+		{
+			//TODO: Implement.
+		}
 	}
 
 
