@@ -3,6 +3,30 @@
 using Array = System.Array;
 
 
+public static class MyAssert
+{
+	[System.Diagnostics.Conditional("UNITY_ASSERTIONS")]
+	public static void IsTrue(System.Func<bool> runTest, string message = null)
+	{
+		bool result = runTest();
+
+		if (message == null)
+			UnityEngine.Assertions.Assert.IsTrue(result);
+		else
+			UnityEngine.Assertions.Assert.IsTrue(result, message);
+	}
+
+	[System.Diagnostics.Conditional("UNITY_ASSERTIONS")]
+	public static void IsTrue(System.Func<string> runTest)
+	{
+		var result = runTest();
+
+		if (result != null)
+			UnityEngine.Assertions.Assert.IsTrue(false, result);
+	}
+
+}
+
 public static class MyExtensions
 {
 	/// <summary>
@@ -47,6 +71,11 @@ public static class Array2DExtensions
     public static Vector2i SizeXY<T>(this T[,] array) { return new Vector2i(array.SizeX(), array.SizeY()); }
 
     public static Vector2i.Iterator AllIndices<T>(this T[,] array) { return new Vector2i.Iterator(array.SizeXY()); }
+	public static System.Collections.Generic.IEnumerable<T> AllItems<T>(this T[,] array)
+	{
+		foreach (var i in array.AllIndices())
+			yield return array.Get(i);
+	}
 }
 public static class Array3DExtensions
 {

@@ -74,8 +74,7 @@ public class ASCGenerator : MonoBehaviour
 												 nSamples.ToString() + "isn't some 2^n + 1");
 
 			//Calculate the number of elements in the binary tree.
-			int size = ((nSamples - 1) * 2) - 1;
-			Values = new Data[size];
+			Values = new Data[GetNNodes(NSamples)];
 		}
 
 		//Below are utility methods that tell you about specific nodes based on their index.
@@ -84,16 +83,11 @@ public class ASCGenerator : MonoBehaviour
 		/// This span touches the left-most edge of the sample range,
 		///     as does its parent, grandparent, etc. all the way back to the root.
 		/// </summary>
-		public int IndexOfFirstLeafNode { get { return Values.Length / 2; } }
+		public int IndexOfFirstLeafNode { get { return GetIndexOfFirstLeafNode(Values.Length); } }
 		/// <summary>
 		/// The index in the binary tree of the given node's parent.
 		/// </summary>
 		public int IndexOfParentNode(int spanI) { return (spanI - 1) / 2; }
-		/// <summary>
-		/// The index in the binary tree of the first child of the given node.
-		/// The second child is the next index after that.
-		/// </summary>
-		public int IndexOfFirstChildNode(int spanI) { return (spanI * 2) + 1; }
 		/// <summary>
 		/// Gets whether the given node is the first child of its parent.
 		/// This means that it and its parent share the same left edge of their spans.
@@ -125,14 +119,66 @@ public class ASCGenerator : MonoBehaviour
 		/// </summary>
 		public int GetLargestSpan(int minSampleI, int maxSampleI)
 		{
+			return GetLargestSpan(minSampleI, maxSampleI, Values.Length, NSamples);
+		}
+		/// <summary>
+		/// Gets the largest "acceptable" span covering the given sample.
+		/// </summary>
+		/// <param name="predicate">
+		/// Evaluates the span at the given index with the given value.
+		/// </param>
+		public int GetLargestSpan(int sampleI, Func<int, Data, bool> predicate)
+		{
+			int spanI = 0;
+			while (!predicate(spanI, Values[spanI]))
+			{
+				//Move to one of the child nodes.
+
+				int min, max;
+				GetEdges(spanI, out min, out max);
+				int mid = (max + min) / 2;
+
+				if (sampleI >= mid)
+					spanI = IndexOfFirstChildNode(spanI) + 1;
+				else
+					spanI = IndexOfFirstChildNode(spanI);
+			}
+
+			return spanI;
+		}
+
+		/// <summary>
+		/// Gets the number of elements in a binary tree to cover the given number of samples.
+		/// </summary>
+		public static int GetNNodes(int nSamples) { return ((nSamples - 1) * 2) - 1; }
+		/// <summary>
+		/// The index in a SpanTree for the first span of smallest size (i.e. size 2).
+		/// This span touches the left-most edge of the sample range,
+		///     as does its parent, grandparent, etc. all the way back to the root.
+		/// </summary>
+		public static int GetIndexOfFirstLeafNode(int nValues) { return nValues / 2; }
+		/// <summary>
+		/// The index in a SpanTree of the first child of the given node.
+		/// The second child is the next index after that.
+		/// </summary>
+		public static int IndexOfFirstChildNode(int spanI) { return (spanI * 2) + 1; }
+		/// <summary>
+		/// For some SpanTree, finds the largest span that starts at exactly the given min sample
+		///     and ends no later than the given max sample.
+		/// </summary>
+		/// <param name="nValues">The number of tree nodes in the SpanTree.</param>
+		/// <param name="nSamples">The number of samples in the SpanTree.</param>
+		public static int GetLargestSpan(int minSampleI, int maxSampleI,
+									     int nNodes, int nSamples)
+		{
 			//Shortcut: if minSample is odd, it's longest span will be the leaf node.
 			if (minSampleI % 2 == 1)
-				return IndexOfFirstLeafNode + minSampleI;
+				return GetIndexOfFirstLeafNode(nNodes) + minSampleI;
 
 			//Start at the root and work downward until we find it.
 			int spanI = 0,
 				spanStart = 0,
-				spanEnd = NSamples - 1,
+				spanEnd = nSamples - 1,
 				spanMid = spanEnd / 2;
 			while (spanStart != minSampleI)
 			{
@@ -148,6 +194,22 @@ public class ASCGenerator : MonoBehaviour
 				}
 			}
 			return spanI;
+		}
+
+		public override string ToString()
+		{
+			var str = new System.Text.StringBuilder();
+			str.Append('[');
+			str.Append(NSamples);
+			str.Append(" samples: ");
+			for (int i = 0; i < Values.Length; ++i)
+			{
+				if (i > 0)
+					str.Append(',');
+				str.Append(Values[i].ToString());
+			}
+			str.Append(']');
+			return str.ToString();
 		}
 	}
 
@@ -257,7 +319,7 @@ public class ASCGenerator : MonoBehaviour
 				{
 					Dike parent = lign.Values[dikeI];
 
-					int childI = lign.IndexOfFirstChildNode(dikeI);
+					int childI = Lign.IndexOfFirstChildNode(dikeI);
 					Dike child1 = lign.Values[childI],
 						 child2 = lign.Values[childI + 1];
 
@@ -286,7 +348,7 @@ public class ASCGenerator : MonoBehaviour
 				nValues = 1;
 				while (firstNodeI < firstLeafNodeI)
 				{
-					firstNodeI = lign.IndexOfFirstChildNode(firstNodeI);
+					firstNodeI = Lign.IndexOfFirstChildNode(firstNodeI);
 					nValues *= 2;
 					int maxNodeI = firstNodeI + nValues;
 
@@ -386,8 +448,26 @@ public class ASCGenerator : MonoBehaviour
 
 	private List<Rect2i> gen_newPadis;
 	private List<Rect2i>[] gen_padiRectsPerXYFarm;
-	private SpanTree<ushort>[,] gen_padiRectsAlongX,
-								gen_padiRectsAlongY;
+	private Strip[,] gen_padiXSpans,
+					 gen_padiYSpans;
+
+	/// <summary>
+	/// Gets the padi covering the given sample.
+	/// </summary>
+	private Rect2i GetPadi(Vector3i samplePos)
+	{
+		Strip xStrip = gen_padiXSpans[samplePos.y, samplePos.z],
+			  yStrip = gen_padiYSpans[samplePos.x, samplePos.z];
+
+		Rect2i padi;
+		xStrip.GetEdges(xStrip.GetLargestSpan(samplePos.x, isStripSpanSimple),
+						out padi.Min.x, out padi.Max.x);
+		yStrip.GetEdges(yStrip.GetLargestSpan(samplePos.y, isStripSpanSimple),
+						out padi.Min.y, out padi.Max.y);
+
+		return padi;
+	}
+	private bool isStripSpanSimple(int i, ushort u) { return i == u; }
 
 	#endregion
 
@@ -431,7 +511,7 @@ public class ASCGenerator : MonoBehaviour
 		gen_newPadis = new List<Rect2i>(gen_samples.SizeX());
 		for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
 		{
-			//Allocate the list with a good first estimate of how many elements it will have.
+			//Allocate the list, with a good first estimate of how many elements it will have.
 			var padis = new List<Rect2i>(gen_samples.SizeX() * gen_samples.SizeY() / 2);
 			gen_padiRectsPerXYFarm[z] = padis;
 			//For every strip in the farm...
@@ -457,10 +537,14 @@ public class ASCGenerator : MonoBehaviour
 						 ++neighborStripI)
 					{
 						var neighborStrip = gen_stripsAlongXY[neighborStripI, z];
+
 						//If this plot on the neighbor strip is the length-maximal simple plot,
 						//    add it to the padi.
 						if (neighborStrip.Values[plotI] == plotI)
 							padi = new Rect2i(padi.Min, new Vector2i(maxX, neighborStripI + 1));
+						//Otherwise, stop here.
+						else
+							break;
 					}
 
 					//Split up the padi so it conforms to the binary tree structure.
@@ -629,12 +713,135 @@ public class ASCGenerator : MonoBehaviour
 		}
 
 
-		//Convert the padis to their more-efficient binary tree form.
-		gen_padiRectsAlongX = new SpanTree<ushort>[gen_samples.GetLength(1), gen_samples.GetLength(2)];
-		gen_padiRectsAlongY = new SpanTree<ushort>[gen_samples.GetLength(0), gen_samples.GetLength(2)];
+		//Convert the padis to a more-efficient SpanTree form.
+		//We need one set of SpanTrees for horizontal extents,
+		//    and another for vertical extents.
+		gen_padiXSpans = new Strip[gen_samples.SizeY(), gen_samples.SizeZ()];
+		foreach (var stripIndex in gen_padiXSpans.AllIndices())
+		{
+			var strip = new Strip(gen_samples.SizeX());
+			for (int i = 0; i < strip.Values.Length; ++i)
+				strip.Values[i] = ushort.MaxValue;
+			gen_padiXSpans.Set(stripIndex, strip);
+		}
+		gen_padiYSpans = new Strip[gen_samples.SizeX(), gen_samples.SizeZ()];
+		foreach (var stripIndex in gen_padiYSpans.AllIndices())
+		{
+			var strip = new Strip(gen_samples.SizeY());
+			for (int i = 0; i < strip.Values.Length; ++i)
+				strip.Values[i] = ushort.MaxValue;
+			gen_padiYSpans.Set(stripIndex, strip);
+		}
+		int nTreeNodesX = Strip.GetNNodes(gen_samples.SizeX()),
+			nTreeNodesY = Strip.GetNNodes(gen_samples.SizeY());
 		for (int padiZ = 0; padiZ < gen_padiRectsPerXYFarm.Length; ++padiZ)
 		{
-			//TODO: Implement.
+			foreach (var padiRect in gen_padiRectsPerXYFarm[padiZ])
+			{
+				//Get the SpanTree index of the area this padi covers, along both axes.
+				//Record that index in all the Strips this padi spans.
+
+				//Horizontal strips:
+				int xSpanI = Strip.GetLargestSpan(padiRect.Min.x, padiRect.Max.x,
+												  nTreeNodesX, gen_samples.SizeX());
+				for (int horzStripI = padiRect.Min.y; horzStripI < padiRect.Max.y; ++horzStripI)
+				{
+					var strip = gen_padiXSpans[horzStripI, padiZ];
+
+					//Confirm that no other padi has touched this area before.
+					UnityEngine.Assertions.Assert.AreEqual(
+						strip.Values[xSpanI], ushort.MaxValue,
+						"More than one padi touches on the horz strip at YZ " +
+							new Vector2i(horzStripI, padiZ) +
+							", padi:" + padiRect);
+
+					//Tell the span and all its parents that it represents a padi.
+					int parentSpanI = xSpanI;
+					while (true)
+					{
+						strip.Values[parentSpanI] = (ushort)xSpanI;
+
+						if (parentSpanI <= 0)
+							break;
+						parentSpanI = strip.IndexOfParentNode(parentSpanI);
+					}
+				}
+
+				//Vertical strips:
+				int ySpanI = Strip.GetLargestSpan(padiRect.Min.y, padiRect.Max.y,
+												  nTreeNodesY, gen_samples.SizeY());
+				for (int vertStripI = padiRect.Min.x; vertStripI < padiRect.Max.x; ++vertStripI)
+				{
+					var strip = gen_padiYSpans[vertStripI, padiZ];
+
+					//Confirm that no other padi has touched this area before.
+					UnityEngine.Assertions.Assert.AreEqual(
+						strip.Values[ySpanI], ushort.MaxValue,
+						"More than one padi touches on the vert strip at XZ " +
+							new Vector2i(vertStripI, padiZ) +
+							", padi:" + padiRect);
+
+					//Tell the span and all its parents that it represents a padi.
+					int parentSpanI = ySpanI;
+					while (true)
+					{
+						strip.Values[parentSpanI] = (ushort)ySpanI;
+
+						if (parentSpanI <= 0)
+							break;
+
+						parentSpanI = strip.IndexOfParentNode(parentSpanI);
+					}
+				}
+			}
+
+			//Double-check that all strips are fully filled in.
+			MyAssert.IsTrue(() =>
+			{
+				for (int farmI = 0; farmI < gen_padiRectsPerXYFarm.Length; ++farmI)
+				{
+					for (int stripY = 0; stripY < gen_padiXSpans.GetLength(0); ++stripY)
+					{
+						var strip = gen_padiXSpans[stripY, farmI];
+
+						ushort spanI = 0;
+						while (true)
+						{
+							spanI = strip.Values[spanI];
+							if (spanI == ushort.MaxValue)
+							{
+								return "Padis don't cover horizontal span of strip at YZ" +
+									       new Vector2i(stripY, farmI) +
+										   ", strip data:" + strip;
+							}
+
+							if (strip.IsLastInLayer(spanI))
+								break;
+						}
+					}
+					for (int stripX = 0; stripX < gen_padiYSpans.GetLength(0); ++stripX)
+					{
+						var strip = gen_padiYSpans[stripX, farmI];
+
+						ushort spanI = 0;
+						while (true)
+						{
+							spanI = strip.Values[spanI];
+							if (spanI == ushort.MaxValue)
+							{
+								return "Padis don't cover vertical span of strip at XZ " +
+									       new Vector2i(stripX, farmI) +
+										   " , strip data:" + strip;
+							}
+
+							if (strip.IsLastInLayer(spanI))
+								break;
+						}
+					}
+				}
+
+				return null;
+			});
 		}
 	}
 
@@ -646,7 +853,8 @@ public class ASCGenerator : MonoBehaviour
 				rend_DoSamples = false,
 				rend_DoLigns = false,
 				rend_DoStrips = false,
-				rend_DoPadis = false;
+				rend_DoPadisPre = false,
+				rend_DoPadisPost;
 
 	public float rend_Area_Alpha = 0.2f,
 				 rend_Sample_Alpha = 0.05f,
@@ -805,7 +1013,8 @@ public class ASCGenerator : MonoBehaviour
 			}
 		}
 
-		if (rend_DoPadis)
+		//TODO: Both padi drawing methods should only show the padis within the sample range.
+		if (rend_DoPadisPre)
 		{
 			if (gen_padiRectsPerXYFarm != null)
 			{
@@ -823,6 +1032,49 @@ public class ASCGenerator : MonoBehaviour
 															  padi.Max.y - border,
 															  z);
 						Gizmos.DrawCube((max + min) * 0.5f, max - min);
+					}
+				}
+			}
+		}
+		else if (rend_DoPadisPost)
+		{
+			if (gen_padiXSpans != null && gen_padiYSpans != null)
+			{
+				const float border = 0.1f;
+				Gizmos.color = rend_Padi_Color;
+
+				Action<Vector3, Vector3> drawPadi = (min, max) =>
+					Gizmos.DrawCube((max + min) * 0.5f, max - min);
+
+				//Build a list of all padis based on the spans.
+				HashSet<Vector2i> posesLeft = new HashSet<Vector2i>();
+				Func<int, ushort, bool> isSimple = (i, u) => i == u;
+				for (int z = 0; z < gen_samples.GetLength(2); ++z)
+				{
+					//Keep track of which positions do not already have a padi assigned yet.
+					UnityEngine.Assertions.Assert.AreEqual(posesLeft.Count, 0);
+					for (int y = 0; y < gen_samples.GetLength(1); ++y)
+						for (int x = 0; x < gen_samples.GetLength(0); ++x)
+							posesLeft.Add(new Vector2i(x, y));
+
+					//For every unassigned position, get its padi.
+					while (posesLeft.Count > 0)
+					{
+						Vector2i pos = posesLeft.First();
+
+						//Make and draw the padi.
+						var padi = GetPadi(new Vector3i(pos.x, pos.y, z));
+						Vector3 min = rend_SampleToWorldSpace(padi.Min.x,
+															  padi.Min.y,
+															  z),
+								max = rend_SampleToWorldSpace(padi.Max.x - border,
+															  padi.Max.y - border,
+															  z);
+						Gizmos.DrawCube((max + min) * 0.5f, max - min);
+
+						//All positions in this padi are now "assigned".
+						foreach (var padiPos in padi)
+							posesLeft.Remove(padiPos);
 					}
 				}
 			}
