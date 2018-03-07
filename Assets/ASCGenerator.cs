@@ -600,8 +600,6 @@ public class ASCGenerator : MonoBehaviour
 					//Start the padi with just the plot's rectangle.
 					int minX, maxX;
 					strip.GetEdges(plotI, out minX, out maxX);
-					if (z == 1 && (stripI == 3 || stripI == 4) && minX == 7)
-						Debug.Log(minX.ToString() + "," + maxX);
 					Rect2i padi = new Rect2i(new Vector2i(minX, stripI),
 											 new Vector2i(maxX, stripI + 1));
 
