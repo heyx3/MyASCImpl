@@ -134,7 +134,7 @@ public struct Rect2i : System.IEquatable<Rect2i>
 	public bool Contains(Rect2i r)
 	{
 		//If this instance contains r's min and max, it must contain all of r.
-		return Contains(r.Min) & Contains(r.Max);
+		return Contains(r.Min) & Contains(new Vector2i(r.Max.x - 1, r.Max.y - 1));
 	}
 	public bool Touches(Rect2i r)
 	{
@@ -295,30 +295,35 @@ public struct Rect3i : System.IEquatable<Rect3i>
 	public Vector3i Size { get { return Max - Min; } }
 
 
-	public Rect3i(Vector3i min, Vector3i maxExclusive)
+	public Rect3i(Vector3i minInclusive, Vector3i maxExclusive)
 	{
-		Min = min;
+		Min = minInclusive;
 		Max = maxExclusive;
 	}
+	public Rect3i(Rect2i range2D, int z)
+		: this(new Vector3i(range2D.Min.x, range2D.Min.y, z),
+			   new Vector3i(range2D.Max.x, range2D.Max.y, z + 1)) { }
 
 
+	public bool ContainsX(int x) { return x >= Min.x & x < Max.x; }
+	public bool ContainsY(int y) { return y >= Min.y & y < Max.y; }
+	public bool ContainsZ(int z) { return z >= Min.z & z < Max.z; }
 	public bool Contains(Vector3i v)
 	{
-		return v.x >= Min.x & v.y >= Min.y & v.z >= Min.z &
-		  	   v.x < Max.x & v.y < Max.y & v.z < Max.z;
+		return ContainsX(v.x) & ContainsY(v.y) & ContainsZ(v.z);
 	}
 	public bool Contains(Rect3i r)
 	{
 		//If this instance contains r's min and max, it must contain all of r.
-		return Contains(r.Min) & Contains(r.Max);
+		return Contains(r.Min) & Contains(new Vector3i(r.Max.x - 1, r.Max.y - 1, r.Max.z - 1));
 	}
 	public bool Touches(Rect3i r)
 	{
 		//If one rectangle is on the left or above or behind the other, they do not touch.
 		//Otherwise, they must be touching.
-		return !(Min.x > r.Max.x | Max.x < r.Min.x |
-				 Min.y > r.Max.y | Max.y < r.Min.y |
-				 Min.z > r.Max.z | Max.z < r.Min.z);
+		return !(Min.x >= r.Max.x | Max.x <= r.Min.x |
+				 Min.y >= r.Max.y | Max.y <= r.Min.y |
+				 Min.z >= r.Max.z | Max.z <= r.Min.z);
 	}
 
 	public override string ToString()

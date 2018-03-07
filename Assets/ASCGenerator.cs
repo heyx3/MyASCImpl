@@ -180,7 +180,7 @@ public class ASCGenerator : MonoBehaviour
 				spanStart = 0,
 				spanEnd = nSamples - 1,
 				spanMid = spanEnd / 2;
-			while (spanStart != minSampleI)
+			while (spanStart != minSampleI | spanEnd > maxSampleI)
 			{
 				if (spanMid <= minSampleI)
 				{
@@ -192,6 +192,8 @@ public class ASCGenerator : MonoBehaviour
 					spanI = IndexOfFirstChildNode(spanI);
 					spanEnd = spanMid;
 				}
+
+				spanMid = (spanStart + spanEnd) / 2;
 			}
 			return spanI;
 		}
@@ -212,6 +214,21 @@ public class ASCGenerator : MonoBehaviour
 			return str.ToString();
 		}
 	}
+
+
+	/// <summary>
+	/// Pauses a coroutine until the "shouldResume" field is set to "true" in the Inspector.
+	/// </summary>
+	private class YieldForResumeField : CustomYieldInstruction
+	{
+		private ASCGenerator gen;
+		public override bool keepWaiting { get { return !gen.shouldResume; } }
+		public YieldForResumeField(ASCGenerator _gen) { gen = _gen; gen.shouldResume = false; }
+	}
+	[SerializeField]
+	private bool shouldBePausable = false;
+	[SerializeField]
+	private bool shouldResume = false;
 
 
 	#region Sampling
@@ -256,6 +273,33 @@ public class ASCGenerator : MonoBehaviour
 		{
 			return "[" + Simplicity + ":" + SimplestIndex + "]";
 		}
+	}
+
+	/// <summary>
+	/// Iterates over all largest simple dikes in a lign.
+	/// </summary>
+	public struct SimpleDikeIterator
+	{
+		public Lign Lign { get; private set; }
+		public SimpleDikeIterator(Lign lign)
+		{
+			Lign = lign;
+			Current = -1;
+		}
+
+		//The stuff that makes this struct enumerable:
+		public int Current { get; private set; }
+		public void Reset() { Current = -1; }
+		public bool MoveNext()
+		{
+			if (Current >= 0 & Lign.IsLastInLayer(Current))
+				return false;
+
+			Current = Lign.Values[Current + 1].SimplestIndex;
+			return true;
+		}
+		public void Dispose() { }
+		public SimpleDikeIterator GetEnumerator() { return this; }
 	}
 
 	private Lign[,] gen_lignsAlongX, gen_lignsAlongY, gen_lignsAlongZ;
@@ -416,6 +460,33 @@ public class ASCGenerator : MonoBehaviour
 
 	#region Strips
 
+	/// <summary>
+	/// Iterates over all largest simple plots in a strip.
+	/// </summary>
+	public struct SimplePlotIterator
+	{
+		public Strip Strip { get; private set; }
+		public SimplePlotIterator(Strip strip)
+		{
+			Strip = strip;
+			Current = -1;
+		}
+
+		//The stuff that makes this struct enumerable:
+		public int Current { get; private set; }
+		public void Reset() { Current = -1; }
+		public bool MoveNext()
+		{
+			if (Current >= 0 & Strip.IsLastInLayer(Current))
+				return false;
+
+			Current = Strip.Values[Current + 1];
+			return true;
+		}
+		public void Dispose() { }
+		public SimplePlotIterator GetEnumerator() { return this; }
+	}
+
 	private Strip[,] gen_stripsAlongXY;
 
 	private void Algo_CalcStrips(out Strip[,] strips, Lign[,] ligns)
@@ -446,7 +517,9 @@ public class ASCGenerator : MonoBehaviour
 
 	#region Padis
 
-	private List<Rect2i> gen_newPadis;
+	//TODO: Would my BVH structure work better for building padis?
+	private List<Rect2i> gen_padisTentative;
+	private int gen_padiConsideringZ;
 	private List<Rect2i>[] gen_padiRectsPerXYFarm;
 	private Strip[,] gen_padiXSpans,
 					 gen_padiYSpans;
@@ -508,9 +581,11 @@ public class ASCGenerator : MonoBehaviour
 
 		//Create padis.
 		gen_padiRectsPerXYFarm = new List<Rect2i>[gen_samples.SizeZ()];
-		gen_newPadis = new List<Rect2i>(gen_samples.SizeX());
+		gen_padisTentative = new List<Rect2i>(gen_samples.SizeX());
 		for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
 		{
+			gen_padiConsideringZ = z;
+
 			//Allocate the list, with a good first estimate of how many elements it will have.
 			var padis = new List<Rect2i>(gen_samples.SizeX() * gen_samples.SizeY() / 2);
 			gen_padiRectsPerXYFarm[z] = padis;
@@ -520,14 +595,13 @@ public class ASCGenerator : MonoBehaviour
 				var strip = gen_stripsAlongXY[stripI, z];
 
 				//For every length-maximal simple plot in the strip...
-				ushort plotI = 0;
-				while (true)
+				foreach (int plotI in new SimplePlotIterator(strip))
 				{
-					plotI = strip.Values[plotI];
-
 					//Start the padi with just the plot's rectangle.
 					int minX, maxX;
 					strip.GetEdges(plotI, out minX, out maxX);
+					if (z == 1 && (stripI == 3 || stripI == 4) && minX == 7)
+						Debug.Log(minX.ToString() + "," + maxX);
 					Rect2i padi = new Rect2i(new Vector2i(minX, stripI),
 											 new Vector2i(maxX, stripI + 1));
 
@@ -540,6 +614,7 @@ public class ASCGenerator : MonoBehaviour
 
 						//If this plot on the neighbor strip is the length-maximal simple plot,
 						//    add it to the padi.
+						//TODO: Is it allowable and better to always expand the padi if the plot is simple -- not simple AND length-maximal?
 						if (neighborStrip.Values[plotI] == plotI)
 							padi = new Rect2i(padi.Min, new Vector2i(maxX, neighborStripI + 1));
 						//Otherwise, stop here.
@@ -548,71 +623,83 @@ public class ASCGenerator : MonoBehaviour
 					}
 
 					//Split up the padi so it conforms to the binary tree structure.
-					gen_newPadis.Clear();
-					gen_newPadis.Add(padi);
-					for (int newPadiI = 0; newPadiI < gen_newPadis.Count; ++newPadiI)
+					//Then, see how the split-up padis fit among the other ones we've already discovered.
+					gen_padisTentative.Clear();
+					gen_padisTentative.Add(padi);
+
+					//Split up each padi so it conforms to the binary tree structure.
+					for (int newPadiI = 0; newPadiI < gen_padisTentative.Count; ++newPadiI)
 					{
-						var newPadi = gen_newPadis[newPadiI];
+						var padiToSplit = gen_padisTentative[newPadiI];
 
 						//For each vertical lign, see whether it breaks up this padi.
-						for (int lignI = newPadi.Min.x; lignI <= newPadi.Max.x; ++lignI)
+						for (int lignI = padiToSplit.Min.x; lignI <= padiToSplit.Max.x; ++lignI)
 						{
 							var lign = gen_lignsAlongY[lignI, z];
 
 							//Get the largest dike that starts at the beginning of the padi
 							//    and doesn't pass over the end of it.
-							int dikeI = lign.GetLargestSpan(newPadi.Min.y, newPadi.Max.y);
+							int dikeI = lign.GetLargestSpan(padiToSplit.Min.y, padiToSplit.Max.y);
 							int dikeMin, dikeMax;
 							lign.GetEdges(dikeI, out dikeMin, out dikeMax);
 
 							//If the dike isn't simple, split the padi.
-							bool isSimple = lign.Values[dikeI].SimplestIndex > dikeI;
+							bool isSimple = lign.Values[dikeI].SimplestIndex <= dikeI;
 							if (!isSimple)
 							{
 								int splitPoint = (dikeMin + dikeMax) / 2;
-								Rect2i newPadi1 = new Rect2i(newPadi.Min,
-															 new Vector2i(newPadi.Max.x, splitPoint)),
-									   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, splitPoint),
-															 newPadi.Max);
+								Rect2i newPadi1 = new Rect2i(padiToSplit.Min,
+															 new Vector2i(padiToSplit.Max.x, splitPoint)),
+									   newPadi2 = new Rect2i(new Vector2i(padiToSplit.Min.x, splitPoint),
+															 padiToSplit.Max);
 
 								//Replace this padi with the first half and keep checking.
-								gen_newPadis[newPadiI] = newPadi1;
-								newPadi = newPadi1;
-								//Stick the second padi at the end of the list to check it later.
-								gen_newPadis.Add(newPadi2);
+								gen_padisTentative[newPadiI] = newPadi1;
+								padiToSplit = newPadi1;
+								//The second part of the split padi will be checked later.
+								gen_padisTentative.Add(newPadi2);
+
+								//Re-check this new, smaller padi against this lign.
+								lignI -= 1;
 							}
 							//Otherwise, if the padi sticks out past the end of the dike, split the padi.
-							else if (dikeMax > newPadi.Max.y)
+							else if (dikeMax < padiToSplit.Max.y)
 							{
-								Rect2i newPadi1 = new Rect2i(newPadi.Min,
-															 new Vector2i(newPadi.Max.x, dikeMax)),
-									   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, dikeMax),
-															 newPadi.Max);
+								Rect2i newPadi1 = new Rect2i(padiToSplit.Min,
+															 new Vector2i(padiToSplit.Max.x, dikeMax)),
+									   newPadi2 = new Rect2i(new Vector2i(padiToSplit.Min.x, dikeMax),
+															 padiToSplit.Max);
 
-								//We know the first part of the new padi fits in a simple dike,
+								//We know the first part of the new padi fits into this simple dike,
 								//    so just replace the current padi with it.
-								gen_newPadis[newPadiI] = newPadi1;
-								newPadi = newPadi1;
-								//The second part of the new padi goes at the end of the list
-								//    so that this algorithm will check it.
-								gen_newPadis.Add(newPadi2);
-								break;
+								gen_padisTentative[newPadiI] = newPadi1;
+								padiToSplit = newPadi1;
+								//The second part of the split padi will be checked later.
+								gen_padisTentative.Add(newPadi2);
+								continue;
 							}
 						}
+
+						//If the user is viewing this algorithm's progress, pause for user input.
+						if (shouldBePausable & rend_SampleRange.ContainsZ(gen_padiConsideringZ))
+							yield return new YieldForResumeField(this);
 					}
 
-					//For each padi, try to add it to the list.
-					//TODO: Would my BVH structure work better here?
-					int nCurrentPadis = padis.Count; //Ignore the new padis that get added.
-					for (int newPadiI = 0; newPadiI < gen_newPadis.Count; ++newPadiI)
+					//For each "tentative" padi, see how it fits among the other padis.
+					//If there aren't any problems, add it to the main list.
+					//We already know the "tentative" padis don't interfere with each other,
+					//    so don't bother counting past the current main list.
+					int nOldPadis = padis.Count;
+					for (int newPadiI = 0; newPadiI < gen_padisTentative.Count; ++newPadiI)
 					{
-						var newPadi = gen_newPadis[newPadiI];
+						var newPadi = gen_padisTentative[newPadiI];
 						bool shouldDrop = false;
 
-						//See if it interacts with other padis.
-						for (int oldPadiI = 0; oldPadiI < nCurrentPadis; ++oldPadiI)
+						//Check each of the current padis.
+						for (int oldPadiI = 0; oldPadiI < nOldPadis; ++oldPadiI)
 						{
 							var oldPadi = padis[oldPadiI];
+
 							//If the other padi totally contains this one,
 							//    then this one isn't necessary.
 							if (oldPadi.Contains(newPadi))
@@ -620,98 +707,66 @@ public class ASCGenerator : MonoBehaviour
 								shouldDrop = true;
 								break;
 							}
-							//If this padi totally contains the other one,
-							//    then the other one isn't necessary.
-							else if (newPadi.Contains(oldPadi))
+							//If this new padi totally contains the current one,
+							//    remove the current one.
+							if (newPadi.Contains(oldPadi))
 							{
 								padis.RemoveAt(oldPadiI);
+								nOldPadis -= 1;
 								oldPadiI -= 1;
 								continue;
 							}
-							//If the two padis just touch a bit, separate this one.
+							//If the two padis just touch a bit, cut this one in half.
 							else if (newPadi.Touches(oldPadi))
 							{
-								//If this padi enters the other one's left side,
-								//    cut off this padi's left side.
-								if (newPadi.Max.x < oldPadi.Max.x)
+								//If this padi sticks out the left or right side,
+								//    cut it in half horizontally.
+								if (newPadi.Min.x < oldPadi.Min.x |
+									newPadi.Max.x > oldPadi.Max.x)
 								{
-									//Add the left side of this padi to be checked later.
-									int oldMaxX = newPadi.Max.x;
-									newPadi.Max.x = oldPadi.Min.x;
-									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.x > 0);
-									gen_newPadis.Add(newPadi);
+									int splitX = (newPadi.Min.x + newPadi.Max.x) / 2;
+									Rect2i newPadi1 = new Rect2i(newPadi.Min,
+																 new Vector2i(splitX, newPadi.Max.y)),
+										   newPadi2 = new Rect2i(new Vector2i(splitX, newPadi.Min.y),
+																 newPadi.Max);
 
-									//Update this padi to just be the right side.
-									newPadi = new Rect2i(new Vector2i(oldPadi.Min.x, newPadi.Min.y),
-														 new Vector2i(oldMaxX, newPadi.Max.y));
+									//Replace this padi with the two halves.
+									gen_padisTentative.Add(newPadi1);
+									gen_padisTentative.Add(newPadi2);
+									shouldDrop = true;
+									break;
 								}
-								//Otherwise, cut off this padi's right side.
+								//If this padi sticks out the top or bottom side,
+								//    cut it in half vertically.
 								else
 								{
-									UnityEngine.Assertions.Assert.IsTrue(newPadi.Min.x >= oldPadi.Min.x);
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Min.y < oldPadi.Min.y |
+																		 newPadi.Max.y > oldPadi.Max.y);
 
-									//Add the right side of this padi to be checked later.
-									int oldMinX = newPadi.Min.x;
-									newPadi.Min.x = oldPadi.Max.x;
-									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.x > 0);
-									gen_newPadis.Add(newPadi);
+									int splitY = (newPadi.Min.y + newPadi.Max.y) / 2;
+									Rect2i newPadi1 = new Rect2i(newPadi.Min,
+																 new Vector2i(newPadi.Max.x, splitY)),
+										   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, splitY),
+																 newPadi.Max);
 
-									//Update this padi to just be the left side.
-									newPadi = new Rect2i(new Vector2i(oldMinX, newPadi.Min.y),
-														 new Vector2i(oldPadi.Max.x, newPadi.Max.y));
+									//Replace this padi with the two halves.
+									gen_padisTentative.Add(newPadi1);
+									gen_padisTentative.Add(newPadi2);
+									shouldDrop = true;
+									break;
 								}
-
-								//If this new padi enters the other one's top side,
-								//    cut off this padi's top side.
-								if (newPadi.Max.y < oldPadi.Max.y)
-								{
-									//Add the top side of this padi to be checked later.
-									int oldMaxY = newPadi.Max.y;
-									newPadi.Max.y = oldPadi.Min.y;
-									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.y > 0);
-									gen_newPadis.Add(newPadi);
-
-									//Update this padi to just be the bottom side.
-									newPadi = new Rect2i(new Vector2i(newPadi.Min.x, oldPadi.Min.y),
-														 new Vector2i(newPadi.Max.x, oldMaxY));
-								}
-								//Otherwise, cut off this padi's bottom side.
-								else
-								{
-									UnityEngine.Assertions.Assert.IsTrue(newPadi.Min.y >= oldPadi.Min.y);
-
-									//Add the bottom side of this padi to be checked later.
-									int oldMinY = newPadi.Min.y;
-									newPadi.Min.y = oldPadi.Max.y;
-									UnityEngine.Assertions.Assert.IsTrue(newPadi.Size.y > 0);
-									gen_newPadis.Add(newPadi);
-
-									//Update this padi to just be the top side.
-									newPadi = new Rect2i(new Vector2i(newPadi.Min.x, oldMinY),
-														 new Vector2i(newPadi.Max.x, oldPadi.Max.y));
-								}
-
-								//Now that we've cut up the new padi,
-								//    everything left should be inside the other padi.
-								UnityEngine.Assertions.Assert.IsTrue(oldPadi.Contains(newPadi));
-								shouldDrop = true;
-								break;
 							}
 						}
 
-						//If this padi is clear, add it to the final list.
+						//If this padi is clear, add it to the main list.
 						if (!shouldDrop)
 							padis.Add(newPadi);
 					}
-
-
-					//Exit the loop if we've reached the end of the strip.
-					if (strip.IsLastInLayer(plotI))
-						break;
 				}
 			}
 		}
 
+		yield break; //TODO: Test the rest of this.
 
 		//Convert the padis to a more-efficient SpanTree form.
 		//We need one set of SpanTrees for horizontal extents,
@@ -804,38 +859,28 @@ public class ASCGenerator : MonoBehaviour
 					{
 						var strip = gen_padiXSpans[stripY, farmI];
 
-						ushort spanI = 0;
-						while (true)
+						foreach (int spanI in new SimplePlotIterator(strip))
 						{
-							spanI = strip.Values[spanI];
 							if (spanI == ushort.MaxValue)
 							{
 								return "Padis don't cover horizontal span of strip at YZ" +
 									       new Vector2i(stripY, farmI) +
 										   ", strip data:" + strip;
 							}
-
-							if (strip.IsLastInLayer(spanI))
-								break;
 						}
 					}
 					for (int stripX = 0; stripX < gen_padiYSpans.GetLength(0); ++stripX)
 					{
 						var strip = gen_padiYSpans[stripX, farmI];
 
-						ushort spanI = 0;
-						while (true)
+						foreach (int spanI in new SimplePlotIterator(strip))
 						{
-							spanI = strip.Values[spanI];
 							if (spanI == ushort.MaxValue)
 							{
 								return "Padis don't cover vertical span of strip at XZ " +
 									       new Vector2i(stripX, farmI) +
 										   " , strip data:" + strip;
 							}
-
-							if (strip.IsLastInLayer(spanI))
-								break;
 						}
 					}
 				}
@@ -853,8 +898,9 @@ public class ASCGenerator : MonoBehaviour
 				rend_DoSamples = false,
 				rend_DoLigns = false,
 				rend_DoStrips = false,
+				rend_DoPadisTemp = false,
 				rend_DoPadisPre = false,
-				rend_DoPadisPost;
+				rend_DoPadisPost = false;
 
 	public float rend_Area_Alpha = 0.2f,
 				 rend_Sample_Alpha = 0.05f,
@@ -867,6 +913,7 @@ public class ASCGenerator : MonoBehaviour
 	public bool rend_Sample_IgnoreBelowThreshold = false;
 
 
+	private Rect3i rend_SampleRange { get { return new Rect3i(rend_Sample_MinI, rend_Sample_MaxI + 1); } }
 	private Vector3i.Iterator rend_SampleIterator
 		{ get { return new Vector3i.Iterator(rend_Sample_MinI, rend_Sample_MaxI + 1); } }
 	private float rend_SampleSpaceIncrement { get { return AreaSize / (float)(NSamples - 1); } }
@@ -902,6 +949,7 @@ public class ASCGenerator : MonoBehaviour
 			//Get the samples this dike spans.
 			spanI = getSimplestIndex(spanTree.Values[spanI]);
 			spanTree.GetEdges(spanI, out sampleMin, out sampleMax);
+			spanI += 1;
 
 			//Calculate the positions to draw the gizmos at.
 			const float border = 0.1f;
@@ -920,8 +968,6 @@ public class ASCGenerator : MonoBehaviour
 			lineEnd[axis2] = samplePos23.x;
 			lineEnd[axis3] = samplePos23.y;
 			spanDrawer(lineStart, lineEnd);
-
-			spanI += 1;
 		}
 	}
 
@@ -951,6 +997,8 @@ public class ASCGenerator : MonoBehaviour
 								  sampleIncrement * 0.5f * value);
 			}
 		}
+
+		//TODO: Am I drawing ligns with the Y flipped? Or padis? Or am I just generating padis incorrectly?
 
 		if (rend_DoLigns)
 		{
@@ -1013,25 +1061,46 @@ public class ASCGenerator : MonoBehaviour
 			}
 		}
 
-		//TODO: Both padi drawing methods should only show the padis within the sample range.
-		if (rend_DoPadisPre)
+		//Padis:
+		Action<Rect2i, int> drawPadiAtZ = (padi, z) =>
+		{
+			const float border = 0.1f;
+			Vector3 min = rend_SampleToWorldSpace(padi.Min.x, padi.Min.y, z),
+					max = rend_SampleToWorldSpace(padi.Max.x - border,
+												  padi.Max.y - border,
+												  z);
+			Gizmos.DrawCube((max + min) * 0.5f, max - min);
+		};
+		if (rend_DoPadisTemp)
+		{
+			if (gen_padisTentative != null &&
+				rend_SampleRange.ContainsZ(gen_padiConsideringZ))
+			{
+				Gizmos.color = rend_Padi_Color;
+
+				foreach (var padi in gen_padisTentative)
+					if (rend_SampleRange.Touches(new Rect3i(padi, gen_padiConsideringZ)))
+						drawPadiAtZ(padi, gen_padiConsideringZ);
+			}
+		}
+		else if (rend_DoPadisPre)
 		{
 			if (gen_padiRectsPerXYFarm != null)
 			{
-				const float border = 0.1f;
 				Gizmos.color = rend_Padi_Color;
 
+				Rect3i sampleRange = rend_SampleRange;
 				for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
 				{
-					foreach (var padi in gen_padiRectsPerXYFarm[z])
+					if (gen_padiRectsPerXYFarm[z] != null)
 					{
-						Vector3 min = rend_SampleToWorldSpace(padi.Min.x,
-															  padi.Min.y,
-															  z),
-								max = rend_SampleToWorldSpace(padi.Max.x - border,
-															  padi.Max.y - border,
-															  z);
-						Gizmos.DrawCube((max + min) * 0.5f, max - min);
+						foreach (var padi in gen_padiRectsPerXYFarm[z])
+						{
+							if (!sampleRange.Touches(new Rect3i(padi, z)))
+								continue;
+
+							drawPadiAtZ(padi, z);
+						}
 					}
 				}
 			}
@@ -1040,15 +1109,12 @@ public class ASCGenerator : MonoBehaviour
 		{
 			if (gen_padiXSpans != null && gen_padiYSpans != null)
 			{
-				const float border = 0.1f;
-				Gizmos.color = rend_Padi_Color;
+				Rect3i sampleRange = rend_SampleRange;
 
-				Action<Vector3, Vector3> drawPadi = (min, max) =>
-					Gizmos.DrawCube((max + min) * 0.5f, max - min);
+				Gizmos.color = rend_Padi_Color;
 
 				//Build a list of all padis based on the spans.
 				HashSet<Vector2i> posesLeft = new HashSet<Vector2i>();
-				Func<int, ushort, bool> isSimple = (i, u) => i == u;
 				for (int z = 0; z < gen_samples.GetLength(2); ++z)
 				{
 					//Keep track of which positions do not already have a padi assigned yet.
@@ -1062,19 +1128,16 @@ public class ASCGenerator : MonoBehaviour
 					{
 						Vector2i pos = posesLeft.First();
 
-						//Make and draw the padi.
+						//Find the padi.
 						var padi = GetPadi(new Vector3i(pos.x, pos.y, z));
-						Vector3 min = rend_SampleToWorldSpace(padi.Min.x,
-															  padi.Min.y,
-															  z),
-								max = rend_SampleToWorldSpace(padi.Max.x - border,
-															  padi.Max.y - border,
-															  z);
-						Gizmos.DrawCube((max + min) * 0.5f, max - min);
-
 						//All positions in this padi are now "assigned".
 						foreach (var padiPos in padi)
 							posesLeft.Remove(padiPos);
+
+						//Only draw it if it touches the sample range.
+						if (!sampleRange.Touches(new Rect3i(padi, z)))
+							continue;
+						drawPadiAtZ(padi, z);
 					}
 				}
 			}

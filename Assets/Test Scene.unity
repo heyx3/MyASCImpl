@@ -376,23 +376,29 @@ MonoBehaviour:
     _FloatParams: []
     _Tex2DParams: []
   Threshold: 0.5
+  shouldBePausable: 0
+  shouldResume: 0
   rend_DoArea: 0
   rend_DoSamples: 1
   rend_DoLigns: 1
   rend_DoStrips: 1
+  rend_DoPadisTemp: 0
+  rend_DoPadisPre: 1
+  rend_DoPadisPost: 0
   rend_Area_Alpha: 0
   rend_Sample_Alpha: 1
+  rend_Lign_Alpha: 1
+  rend_Strip_Color: {r: 1, g: 0, b: 0, a: 0.5019608}
+  rend_Padi_Color: {r: 0, g: 1, b: 0, a: 0.5019608}
   rend_Sample_MinI:
     x: 0
     y: 0
-    z: 4
+    z: 1
   rend_Sample_MaxI:
     x: 8
     y: 8
-    z: 4
+    z: 1
   rend_Sample_IgnoreBelowThreshold: 1
-  rend_Lign_Alpha: 1
-  rend_Strip_Alpha: 0.5
 --- !u!33 &1710042881
 MeshFilter:
   m_ObjectHideFlags: 0
