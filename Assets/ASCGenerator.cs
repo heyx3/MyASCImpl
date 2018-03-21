@@ -487,21 +487,22 @@ public class ASCGenerator : MonoBehaviour
 		public SimplePlotIterator GetEnumerator() { return this; }
 	}
 
-	private Strip[,] gen_stripsAlongXY;
+	private Strip[,] gen_stripsHorz;
 
-	private void Algo_CalcStrips(out Strip[,] strips, Lign[,] ligns)
+	private void Algo_CalcStrips(out Strip[,] strips, Lign[,] ligns,
+								 int axis, int axis2, int axis3)
 	{
-		strips = new Strip[gen_samples.GetLength(1) - 1,
-						   gen_samples.GetLength(2)];
+		strips = new Strip[gen_samples.GetLength(axis2) - 1,
+						   gen_samples.GetLength(axis3)];
 		foreach (var stripPos2D in strips.AllIndices())
 		{
-			var strip = new Strip(gen_samples.GetLength(0));
+			var strip = new Strip(gen_samples.GetLength(axis));
 
 			//Each lign has its own path through the largest simple dikes.
 			//Merge these largest simple dikes together into largest simple "plots"
 			//    by always picking the smaller of the two dikes.
 			Lign lign1 = ligns.Get(stripPos2D),
-				 lign2 = ligns.Get(stripPos2D.MoreX);
+				 lign2 = ligns.Get(stripPos2D.More(axis));
 
 			for (int i = 0; i < strip.Values.Length; ++i)
 			{
@@ -518,29 +519,201 @@ public class ASCGenerator : MonoBehaviour
 	#region Padis
 
 	//TODO: Would my BVH structure work better for building padis?
+
 	private List<Rect2i> gen_padisTentative;
-	private int gen_padiConsideringZ;
 	private List<Rect2i>[] gen_padiRectsPerXYFarm;
 	private Strip[,] gen_padiXSpans,
 					 gen_padiYSpans;
 
-	/// <summary>
-	/// Gets the padi covering the given sample.
-	/// </summary>
-	private Rect2i GetPadi(Vector3i samplePos)
+	private void Algo_BuildPadis(out List<Rect2i>[] padisPerFarm,
+								 int axis, int axis2, int axis3,
+								 Strip[,] stripsAlongAxis1,
+								 Lign[,] lignsAlongAxis2)
 	{
-		Strip xStrip = gen_padiXSpans[samplePos.y, samplePos.z],
-			  yStrip = gen_padiYSpans[samplePos.x, samplePos.z];
+		if (gen_padisTentative == null)
+			gen_padisTentative = new List<Rect2i>(gen_samples.SizeX());
 
-		Rect2i padi;
-		xStrip.GetEdges(xStrip.GetLargestSpan(samplePos.x, isStripSpanSimple),
-						out padi.Min.x, out padi.Max.x);
-		yStrip.GetEdges(yStrip.GetLargestSpan(samplePos.y, isStripSpanSimple),
-						out padi.Min.y, out padi.Max.y);
+		padisPerFarm = new List<Rect2i>[gen_samples.GetLength(axis3)];
 
-		return padi;
+		for (int farmI = 0; farmI < padisPerFarm.Length; ++farmI)
+		{
+			//Allocate the list, with a good first estimate of how many elements it will have.
+			var padis = new List<Rect2i>(gen_samples.GetLength(axis) *
+										 gen_samples.GetLength(axis2) / 4);
+			padisPerFarm[farmI] = padis;
+
+			//For every strip in the farm...
+			for (int stripI = 0; stripI < stripsAlongAxis1.SizeX(); ++stripI)
+			{
+				var strip = stripsAlongAxis1[stripI, farmI];
+
+				//For every length-maximal simple plot in the strip...
+				foreach (int plotI in new SimplePlotIterator(strip))
+				{
+					//Start the padi with just the plot's rectangle.
+					int minSample, maxSample;
+					strip.GetEdges(plotI, out minSample, out maxSample);
+					Rect2i padi = new Rect2i(new Vector2i(minSample, stripI),
+											 new Vector2i(maxSample, stripI + 1));
+
+					//Move downward through neighbor strips of the same size and add them to the padi.
+					for (int neighborStripI = stripI + 1;
+						 neighborStripI < stripsAlongAxis1.SizeX();
+						 ++neighborStripI)
+					{
+						var neighborStrip = stripsAlongAxis1[neighborStripI, farmI];
+
+						//If this plot on the neighbor strip is the length-maximal simple plot,
+						//    add it to the padi.
+						//TODO: Is it allowable and better to always expand the padi if the plot is simple -- not simple AND length-maximal?
+						if (neighborStrip.Values[plotI] == plotI)
+							padi = new Rect2i(padi.Min, new Vector2i(maxSample, neighborStripI + 1));
+						//Otherwise, stop here.
+						else
+							break;
+					}
+
+					//Split up the padi so it conforms to the binary tree structure.
+					//Then, see how the split-up padis fit among the other ones we've already discovered.
+					gen_padisTentative.Clear();
+					gen_padisTentative.Add(padi);
+
+					//Split up each padi so it conforms to the binary tree structure.
+					for (int newPadiI = 0; newPadiI < gen_padisTentative.Count; ++newPadiI)
+					{
+						var padiToSplit = gen_padisTentative[newPadiI];
+
+						//For each perpendicular lign, see whether it breaks up this padi.
+						for (int lignI = padiToSplit.Min.x; lignI <= padiToSplit.Max.x; ++lignI)
+						{
+							var lign = lignsAlongAxis2[lignI, farmI];
+
+							//Get the largest dike that starts at the beginning of the padi
+							//    and doesn't pass over the end of it.
+							int dikeI = lign.GetLargestSpan(padiToSplit.Min.y,
+															padiToSplit.Max.y);
+							int dikeMin, dikeMax;
+							lign.GetEdges(dikeI, out dikeMin, out dikeMax);
+
+							//If the dike isn't simple, split the padi.
+							bool isSimple = lign.Values[dikeI].SimplestIndex <= dikeI;
+							if (!isSimple)
+							{
+								int splitPoint = (dikeMin + dikeMax) / 2;
+								Rect2i newPadi1 = new Rect2i(padiToSplit.Min,
+															 new Vector2i(padiToSplit.Max.x, splitPoint)),
+									   newPadi2 = new Rect2i(new Vector2i(padiToSplit.Min.x, splitPoint),
+															 padiToSplit.Max);
+
+								//Replace this padi with the first half and keep checking.
+								gen_padisTentative[newPadiI] = newPadi1;
+								padiToSplit = newPadi1;
+								//The second part of the split padi will be checked later.
+								gen_padisTentative.Add(newPadi2);
+
+								//Re-check this new, smaller padi against this lign.
+								lignI -= 1;
+							}
+							//Otherwise, if the padi sticks out past the end of the dike, split the padi.
+							else if (dikeMax < padiToSplit.Max.y)
+							{
+								Rect2i newPadi1 = new Rect2i(padiToSplit.Min,
+															 new Vector2i(padiToSplit.Max.x, dikeMax)),
+									   newPadi2 = new Rect2i(new Vector2i(padiToSplit.Min.x, dikeMax),
+															 padiToSplit.Max);
+
+								//We know the first part of the new padi fits into this simple dike,
+								//    so just replace the current padi with it.
+								gen_padisTentative[newPadiI] = newPadi1;
+								padiToSplit = newPadi1;
+								//The second part of the split padi will be checked later.
+								gen_padisTentative.Add(newPadi2);
+								continue;
+							}
+						}
+					}
+
+					//For each "tentative" padi, see how it fits among the other padis.
+					//If there aren't any problems, add it to the main list.
+					//We already know the "tentative" padis don't interfere with each other,
+					//    so don't bother counting past the current main list.
+					int nOldPadis = padis.Count;
+					for (int newPadiI = 0; newPadiI < gen_padisTentative.Count; ++newPadiI)
+					{
+						var newPadi = gen_padisTentative[newPadiI];
+						bool shouldDrop = false;
+
+						//Check each of the current padis.
+						for (int oldPadiI = 0; oldPadiI < nOldPadis; ++oldPadiI)
+						{
+							var oldPadi = padis[oldPadiI];
+
+							//If the other padi totally contains this one,
+							//    then this one isn't necessary.
+							if (oldPadi.Contains(newPadi))
+							{
+								shouldDrop = true;
+								break;
+							}
+							//If this new padi totally contains the current one,
+							//    remove the current one.
+							if (newPadi.Contains(oldPadi))
+							{
+								padis.RemoveAt(oldPadiI);
+								nOldPadis -= 1;
+								oldPadiI -= 1;
+								continue;
+							}
+							//If the two padis just touch a bit, cut this one in half.
+							else if (newPadi.Touches(oldPadi))
+							{
+								//If this padi sticks out the left or right side,
+								//    cut it in half horizontally.
+								if (newPadi.Min.x < oldPadi.Min.x |
+									newPadi.Max.x > oldPadi.Max.x)
+								{
+									int splitX = (newPadi.Min.x + newPadi.Max.x) / 2;
+									Rect2i newPadi1 = new Rect2i(newPadi.Min,
+																 new Vector2i(splitX, newPadi.Max.y)),
+										   newPadi2 = new Rect2i(new Vector2i(splitX, newPadi.Min.y),
+																 newPadi.Max);
+
+									//Replace this padi with the two halves.
+									gen_padisTentative.Add(newPadi1);
+									gen_padisTentative.Add(newPadi2);
+									shouldDrop = true;
+									break;
+								}
+								//If this padi sticks out the top or bottom side,
+								//    cut it in half vertically.
+								else
+								{
+									UnityEngine.Assertions.Assert.IsTrue(newPadi.Min.y < oldPadi.Min.y |
+																		 newPadi.Max.y > oldPadi.Max.y);
+
+									int splitY = (newPadi.Min.y + newPadi.Max.y) / 2;
+									Rect2i newPadi1 = new Rect2i(newPadi.Min,
+																 new Vector2i(newPadi.Max.x, splitY)),
+										   newPadi2 = new Rect2i(new Vector2i(newPadi.Min.x, splitY),
+																 newPadi.Max);
+
+									//Replace this padi with the two halves.
+									gen_padisTentative.Add(newPadi1);
+									gen_padisTentative.Add(newPadi2);
+									shouldDrop = true;
+									break;
+								}
+							}
+						}
+
+						//If this padi is clear, add it to the main list.
+						if (!shouldDrop)
+							padis.Add(newPadi);
+					}
+				}
+			}
+		}
 	}
-	private bool isStripSpanSimple(int i, ushort u) { return i == u; }
 
 	#endregion
 
@@ -574,12 +747,15 @@ public class ASCGenerator : MonoBehaviour
 
 		yield return null;
 
-		//Create strips.
-		Algo_CalcStrips(out gen_stripsAlongXY, gen_lignsAlongX);
+		//Create horizontal strips.
+		Algo_CalcStrips(out gen_stripsHorz, gen_lignsAlongX, 0, 1, 2);
 
 		yield return null;
 
 		//Create padis.
+		Algo_BuildPadis(out gen_padiRectsPerXYFarm, 0, 1, 2,
+						gen_stripsHorz, gen_lignsAlongY);
+		/*
 		gen_padiRectsPerXYFarm = new List<Rect2i>[gen_samples.SizeZ()];
 		gen_padisTentative = new List<Rect2i>(gen_samples.SizeX());
 		for (int z = 0; z < gen_padiRectsPerXYFarm.Length; ++z)
@@ -763,13 +939,13 @@ public class ASCGenerator : MonoBehaviour
 				}
 			}
 		}
+		*/
 
-		yield break; //TODO: Test the rest of this.
-
+		//TODO: Pull the below into another function.
 		//Convert the padis to a more-efficient SpanTree form.
 		//We need one set of SpanTrees for horizontal extents,
 		//    and another for vertical extents.
-		gen_padiXSpans = new Strip[gen_samples.SizeY(), gen_samples.SizeZ()];
+		gen_padiXSpans = new Strip[gen_samples.SizeY() - 1, gen_samples.SizeZ()];
 		foreach (var stripIndex in gen_padiXSpans.AllIndices())
 		{
 			var strip = new Strip(gen_samples.SizeX());
@@ -777,7 +953,7 @@ public class ASCGenerator : MonoBehaviour
 				strip.Values[i] = ushort.MaxValue;
 			gen_padiXSpans.Set(stripIndex, strip);
 		}
-		gen_padiYSpans = new Strip[gen_samples.SizeX(), gen_samples.SizeZ()];
+		gen_padiYSpans = new Strip[gen_samples.SizeX() - 1, gen_samples.SizeZ()];
 		foreach (var stripIndex in gen_padiYSpans.AllIndices())
 		{
 			var strip = new Strip(gen_samples.SizeY());
@@ -789,6 +965,7 @@ public class ASCGenerator : MonoBehaviour
 			nTreeNodesY = Strip.GetNNodes(gen_samples.SizeY());
 		for (int padiZ = 0; padiZ < gen_padiRectsPerXYFarm.Length; ++padiZ)
 		{
+			//Convert all the padis.
 			foreach (var padiRect in gen_padiRectsPerXYFarm[padiZ])
 			{
 				//Get the SpanTree index of the area this padi covers, along both axes.
@@ -814,8 +991,9 @@ public class ASCGenerator : MonoBehaviour
 					{
 						strip.Values[parentSpanI] = (ushort)xSpanI;
 
-						if (parentSpanI <= 0)
+						if (parentSpanI <= 0 | !strip.IsFirstChild(parentSpanI))
 							break;
+
 						parentSpanI = strip.IndexOfParentNode(parentSpanI);
 					}
 				}
@@ -840,7 +1018,7 @@ public class ASCGenerator : MonoBehaviour
 					{
 						strip.Values[parentSpanI] = (ushort)ySpanI;
 
-						if (parentSpanI <= 0)
+						if (parentSpanI <= 0 | !strip.IsFirstChild(parentSpanI))
 							break;
 
 						parentSpanI = strip.IndexOfParentNode(parentSpanI);
@@ -848,37 +1026,42 @@ public class ASCGenerator : MonoBehaviour
 				}
 			}
 
+			//Fill in the values in the smaller spans.
+			foreach (var strip in gen_padiXSpans.AllItems().Concat(gen_padiYSpans.AllItems()))
+			{
+				for (int spanI = 1; spanI < strip.Values.Length; ++spanI)
+					if (strip.Values[spanI] == ushort.MaxValue)
+						strip.Values[spanI] = strip.Values[strip.IndexOfParentNode(spanI)];
+			}
+
 			//Double-check that all strips are fully filled in.
 			MyAssert.IsTrue(() =>
 			{
-				for (int farmI = 0; farmI < gen_padiRectsPerXYFarm.Length; ++farmI)
+				for (int stripY = 0; stripY < gen_padiXSpans.GetLength(0); ++stripY)
 				{
-					for (int stripY = 0; stripY < gen_padiXSpans.GetLength(0); ++stripY)
-					{
-						var strip = gen_padiXSpans[stripY, farmI];
+					var strip = gen_padiXSpans[stripY, padiZ];
 
-						foreach (int spanI in new SimplePlotIterator(strip))
+					foreach (int spanI in new SimplePlotIterator(strip))
+					{
+						if (spanI == ushort.MaxValue)
 						{
-							if (spanI == ushort.MaxValue)
-							{
-								return "Padis don't cover horizontal span of strip at YZ" +
-									       new Vector2i(stripY, farmI) +
-										   ", strip data:" + strip;
-							}
+							return "Padis don't cover horizontal span of strip at YZ" +
+									   new Vector2i(stripY, padiZ) +
+									   ", strip data:" + strip;
 						}
 					}
-					for (int stripX = 0; stripX < gen_padiYSpans.GetLength(0); ++stripX)
-					{
-						var strip = gen_padiYSpans[stripX, farmI];
+				}
+				for (int stripX = 0; stripX < gen_padiYSpans.GetLength(0); ++stripX)
+				{
+					var strip = gen_padiYSpans[stripX, padiZ];
 
-						foreach (int spanI in new SimplePlotIterator(strip))
+					foreach (int spanI in new SimplePlotIterator(strip))
+					{
+						if (spanI == ushort.MaxValue)
 						{
-							if (spanI == ushort.MaxValue)
-							{
-								return "Padis don't cover vertical span of strip at XZ " +
-									       new Vector2i(stripX, farmI) +
-										   " , strip data:" + strip;
-							}
+							return "Padis don't cover vertical span of strip at XZ " +
+									   new Vector2i(stripX, padiZ) +
+									   " , strip data:" + strip;
 						}
 					}
 				}
@@ -896,7 +1079,6 @@ public class ASCGenerator : MonoBehaviour
 				rend_DoSamples = false,
 				rend_DoLigns = false,
 				rend_DoStrips = false,
-				rend_DoPadisTemp = false,
 				rend_DoPadisPre = false,
 				rend_DoPadisPost = false;
 
@@ -915,6 +1097,24 @@ public class ASCGenerator : MonoBehaviour
 	private Vector3i.Iterator rend_SampleIterator
 		{ get { return new Vector3i.Iterator(rend_Sample_MinI, rend_Sample_MaxI + 1); } }
 	private float rend_SampleSpaceIncrement { get { return AreaSize / (float)(NSamples - 1); } }
+
+	/// <summary>
+	/// Gets the padi covering the given sample.
+	/// </summary>
+	private Rect2i GetPadi(Vector3i samplePos)
+	{
+		Strip xStrip = gen_padiXSpans[samplePos.y, samplePos.z],
+			  yStrip = gen_padiYSpans[samplePos.x, samplePos.z];
+
+		Rect2i padi;
+		xStrip.GetEdges(xStrip.GetLargestSpan(samplePos.x, isStripSpanSimple),
+						out padi.Min.x, out padi.Max.x);
+		yStrip.GetEdges(yStrip.GetLargestSpan(samplePos.y, isStripSpanSimple),
+						out padi.Min.y, out padi.Max.y);
+
+		return padi;
+	}
+	private bool isStripSpanSimple(int i, ushort u) { return i == u; }
 
 	private float rend_SampleToWorldSpace(float sampleI)
 	{
@@ -1037,10 +1237,10 @@ public class ASCGenerator : MonoBehaviour
 			foreach (var sampleI in rend_SampleIterator)
 			{
 				//If this index is the beginning of a strip, render that strip.
-				if (gen_stripsAlongXY != null && sampleI.x == 0 &&
-					sampleI.y < gen_stripsAlongXY.GetLength(0))
+				if (gen_stripsHorz != null && sampleI.x == 0 &&
+					sampleI.y < gen_stripsHorz.GetLength(0))
 				{
-					var strip = gen_stripsAlongXY[sampleI.y, sampleI.z];
+					var strip = gen_stripsHorz[sampleI.y, sampleI.z];
 					Gizmos.color = rend_Strip_Color;
 					rend_DrawSpans(strip, 0, 1, 2, new Vector2i(sampleI.y, sampleI.z),
 							       i => i,
@@ -1069,19 +1269,7 @@ public class ASCGenerator : MonoBehaviour
 												  z);
 			Gizmos.DrawCube((max + min) * 0.5f, max - min);
 		};
-		if (rend_DoPadisTemp)
-		{
-			if (gen_padisTentative != null &&
-				rend_SampleRange.ContainsZ(gen_padiConsideringZ))
-			{
-				Gizmos.color = rend_Padi_Color;
-
-				foreach (var padi in gen_padisTentative)
-					if (rend_SampleRange.Touches(new Rect3i(padi, gen_padiConsideringZ)))
-						drawPadiAtZ(padi, gen_padiConsideringZ);
-			}
-		}
-		else if (rend_DoPadisPre)
+		if (rend_DoPadisPre)
 		{
 			if (gen_padiRectsPerXYFarm != null)
 			{
@@ -1109,7 +1297,7 @@ public class ASCGenerator : MonoBehaviour
 			{
 				Rect3i sampleRange = rend_SampleRange;
 
-				Gizmos.color = rend_Padi_Color;
+				Gizmos.color = rend_Padi_Color * 0.9f;
 
 				//Build a list of all padis based on the spans.
 				HashSet<Vector2i> posesLeft = new HashSet<Vector2i>();
@@ -1117,8 +1305,8 @@ public class ASCGenerator : MonoBehaviour
 				{
 					//Keep track of which positions do not already have a padi assigned yet.
 					UnityEngine.Assertions.Assert.AreEqual(posesLeft.Count, 0);
-					for (int y = 0; y < gen_samples.GetLength(1); ++y)
-						for (int x = 0; x < gen_samples.GetLength(0); ++x)
+					for (int y = 0; y < gen_samples.GetLength(1) - 1; ++y)
+						for (int x = 0; x < gen_samples.GetLength(0) - 1; ++x)
 							posesLeft.Add(new Vector2i(x, y));
 
 					//For every unassigned position, get its padi.

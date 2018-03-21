@@ -381,10 +381,9 @@ MonoBehaviour:
   rend_DoArea: 0
   rend_DoSamples: 1
   rend_DoLigns: 1
-  rend_DoStrips: 1
-  rend_DoPadisTemp: 0
-  rend_DoPadisPre: 1
-  rend_DoPadisPost: 0
+  rend_DoStrips: 0
+  rend_DoPadisPre: 0
+  rend_DoPadisPost: 1
   rend_Area_Alpha: 0
   rend_Sample_Alpha: 1
   rend_Lign_Alpha: 1

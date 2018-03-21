@@ -18,8 +18,10 @@ public struct Vector2i : System.IEquatable<Vector2i>
 
 	public Vector2i LessX { get { return new Vector2i(x - 1, y); } }
 	public Vector2i LessY { get { return new Vector2i(x, y - 1); } }
+	public Vector2i Less(int axis) { var v = this; v[axis] -= 1; return v; }
 	public Vector2i MoreX { get { return new Vector2i(x + 1, y); } }
 	public Vector2i MoreY { get { return new Vector2i(x, y + 1); } }
+	public Vector2i More(int axis) { var v = this; v[axis] += 1; return v; }
 
 
 	public static Vector2i operator +(Vector2i a, Vector2i b) { return new Vector2i(a.x + b.x, a.y + b.y); }
